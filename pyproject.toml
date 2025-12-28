@@ -1,0 +1,30 @@
+[project]
+name = "csv-analyzer"
+version = "1.0.0"
+description = "A large CSV viewer and analyzer with PyQt frontend and separated backend"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyqt6>=6.6.0",
+    "pandas>=2.1.0",
+    "numpy>=1.26.0",
+    "duckdb>=0.9.0",
+    "pyarrow>=14.0.0",
+    "polars>=0.19.0",
+    "scipy>=1.11.0",
+    "chardet>=5.2.0",
+]
+
+[project.scripts]
+csv-analyzer = "csv_analyzer.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
