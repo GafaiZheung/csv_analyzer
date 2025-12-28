@@ -7,7 +7,7 @@ from typing import List, Any, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, 
     QPushButton, QLabel, QSpinBox, QComboBox, QHeaderView,
-    QAbstractItemView, QFrame, QMenu
+    QAbstractItemView, QFrame, QMenu, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal, QPoint
 from PyQt6.QtGui import QFont, QAction
@@ -146,6 +146,9 @@ class DataTableWidget(QWidget):
         v_header = self.table_view.verticalHeader()
         v_header.setDefaultSectionSize(28)
         v_header.setMinimumSectionSize(28)
+        
+        # 设置表格视图可以扩展填充可用空间
+        self.table_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
         layout.addWidget(self.table_view)
         

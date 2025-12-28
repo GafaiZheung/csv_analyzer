@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenuBar, QMenu, QToolBar, QStatusBar, QFileDialog,
     QTabWidget, QMessageBox, QInputDialog, QLabel, QProgressBar,
-    QApplication, QToolButton, QFrame
+    QApplication, QToolButton, QFrame, QLineEdit, QCompleter
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QEvent, QRect
-from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPainter, QColor, QPen
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QEvent, QRect, QStringListModel
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPainter, QColor, QPen, QShortcut
 
 from csv_analyzer.core.ipc import IPCClient, MessageType
 from csv_analyzer.core.workspace import WorkspaceManager, WorkspaceConfig
@@ -221,11 +221,24 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.installEventFilter(self)
         
+        # 设置快捷键
+        self._setup_shortcuts()
+        
         # 启动后端
         self._start_backend()
         
         # 加载工作区
         QTimer.singleShot(500, self._load_workspace)
+    
+    def _setup_shortcuts(self):
+        """设置快捷键"""
+        # Cmd+F / Ctrl+F 打开列搜索
+        find_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        find_shortcut.activated.connect(self._show_column_search)
+        
+        # Esc 关闭列搜索
+        esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        esc_shortcut.activated.connect(self._hide_column_search)
     
     def _setup_ui(self):
         """设置UI"""
@@ -270,11 +283,12 @@ class MainWindow(QMainWindow):
         
         # 主分割器
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)  # 防止子控件被完全折叠
         
         # 侧边栏
         self.sidebar = SidebarWidget()
-        self.sidebar.setMinimumWidth(200)
-        self.sidebar.setMaximumWidth(400)
+        self.sidebar.setMinimumWidth(120)  # 降低最小宽度以便调整
+        # 移除最大宽度限制，改用splitter控制
         self.main_splitter.addWidget(self.sidebar)
         
         # 中间区域
@@ -283,8 +297,11 @@ class MainWindow(QMainWindow):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
         
-        # 中间垂直分割器
-        self.center_splitter = QSplitter(Qt.Orientation.Vertical)
+        # 数据Tab容器（包含Tab和搜索栏）
+        data_container = QWidget()
+        data_container_layout = QVBoxLayout(data_container)
+        data_container_layout.setContentsMargins(0, 0, 0, 0)
+        data_container_layout.setSpacing(0)
         
         # 数据表格Tab（标签靠左）
         self.data_tabs = QTabWidget()
@@ -293,11 +310,82 @@ class MainWindow(QMainWindow):
         self.data_tabs.setDocumentMode(True)
         # 标签靠左对齐
         self.data_tabs.tabBar().setExpanding(False)
-        self.center_splitter.addWidget(self.data_tabs)
+        data_container_layout.addWidget(self.data_tabs)
+        
+        # 列搜索栏（默认隐藏，按Cmd+F/Ctrl+F显示）
+        self.column_search_bar = QWidget()
+        self.column_search_bar.setVisible(False)
+        search_bar_layout = QHBoxLayout(self.column_search_bar)
+        search_bar_layout.setContentsMargins(4, 4, 4, 4)
+        search_bar_layout.setSpacing(8)
+        
+        search_bar_layout.addStretch()  # 靠右显示
+        
+        search_label = QLabel("跳转到列:")
+        search_label.setStyleSheet(f"color: {VSCODE_COLORS['text_secondary']};")
+        search_bar_layout.addWidget(search_label)
+        
+        self.column_search_input = QLineEdit()
+        self.column_search_input.setPlaceholderText("输入 表名.列名 或列名...")
+        self.column_search_input.setFixedWidth(250)
+        self.column_search_input.returnPressed.connect(self._on_column_search_enter)
+        self.column_search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {VSCODE_COLORS['input_bg']};
+                color: {VSCODE_COLORS['foreground']};
+                border: 1px solid {VSCODE_COLORS['border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+            }}
+            QLineEdit:focus {{
+                border-color: {VSCODE_COLORS['input_focus_border']};
+            }}
+        """)
+        
+        # 列搜索自动补全
+        self.column_completer = QCompleter()
+        self.column_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.column_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.column_search_input.setCompleter(self.column_completer)
+        self.column_completer.activated.connect(self._on_column_selected)
+        
+        search_bar_layout.addWidget(self.column_search_input)
+        
+        # 关闭按钮
+        close_search_btn = QToolButton()
+        close_search_btn.setIcon(get_icon("clear"))
+        close_search_btn.setFixedSize(20, 20)
+        close_search_btn.setToolTip("关闭搜索栏 (Esc)")
+        close_search_btn.clicked.connect(self._hide_column_search)
+        close_search_btn.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                border: none;
+            }}
+            QToolButton:hover {{
+                background-color: {VSCODE_COLORS['hover']};
+                border-radius: 4px;
+            }}
+        """)
+        search_bar_layout.addWidget(close_search_btn)
+        
+        self.column_search_bar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {VSCODE_COLORS['sidebar_bg']};
+                border-bottom: 1px solid {VSCODE_COLORS['border']};
+            }}
+        """)
+        data_container_layout.addWidget(self.column_search_bar)
+        
+        # 中间垂直分割器
+        self.center_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.center_splitter.setChildrenCollapsible(False)
+        
+        self.center_splitter.addWidget(data_container)
         
         # 下部：SQL编辑器
         self.sql_editor = SQLEditorWidget()
-        self.sql_editor.setMinimumHeight(100)
+        self.sql_editor.setMinimumHeight(80)
         self.sql_editor.setMaximumHeight(400)
         self.center_splitter.addWidget(self.sql_editor)
         
@@ -308,9 +396,14 @@ class MainWindow(QMainWindow):
         
         # 右侧面板：单元格检查器（替代原来的分析面板）
         self.cell_inspector = CellInspectorWidget()
-        self.cell_inspector.setMinimumWidth(280)
-        self.cell_inspector.setMaximumWidth(450)
+        self.cell_inspector.setMinimumWidth(120)  # 降低最小宽度以便调整
+        # 移除最大宽度限制，改用splitter控制
         self.main_splitter.addWidget(self.cell_inspector)
+        
+        # 设置拉伸因子：侧边栏(0)=固定, 中间(1)=拉伸, 右侧(0)=固定
+        self.main_splitter.setStretchFactor(0, 0)  # 侧边栏不自动拉伸
+        self.main_splitter.setStretchFactor(1, 1)  # 中间区域自动拉伸
+        self.main_splitter.setStretchFactor(2, 0)  # 右侧面板不自动拉伸
         
         self.main_splitter.setSizes([250, 850, 320])
         
@@ -782,6 +875,7 @@ class MainWindow(QMainWindow):
         self.sidebar.view_double_clicked.connect(self._on_view_open)
         self.sidebar.table_delete_requested.connect(self._on_table_delete)
         self.sidebar.view_delete_requested.connect(self._on_view_delete)
+        self.sidebar.view_export_requested.connect(self._on_export_view)
         
         # SQL编辑器信号
         self.sql_editor.execute_requested.connect(self._execute_sql)
@@ -861,9 +955,147 @@ class MainWindow(QMainWindow):
         self._run_async(do_refresh, on_refreshed)
     
     def _on_export(self):
-        """导出结果"""
-        # TODO: 实现导出功能
-        pass
+        """导出当前结果"""
+        # 获取当前Tab的数据
+        current_widget = self.data_tabs.currentWidget()
+        if not isinstance(current_widget, DataTableWidget):
+            QMessageBox.warning(self, "提示", "请先打开一个数据表或查询结果")
+            return
+        
+        columns, data = current_widget.get_current_data()
+        if not columns or not data:
+            QMessageBox.warning(self, "提示", "当前没有可导出的数据")
+            return
+        
+        # 选择保存路径
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出为CSV",
+            "",
+            "CSV文件 (*.csv);;所有文件 (*)"
+        )
+        
+        if file_path:
+            self._export_data_to_csv(file_path, columns, data)
+    
+    def _on_export_view(self, view_name: str, sql: str):
+        """导出视图为CSV"""
+        # 选择保存路径
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"导出视图 {view_name} 为CSV",
+            f"{view_name}.csv",
+            "CSV文件 (*.csv);;所有文件 (*)"
+        )
+        
+        if not file_path:
+            return
+        
+        self._show_status(f"正在导出视图 {view_name}...")
+        self._show_progress(True)
+        
+        def do_export():
+            # 执行SQL获取所有数据
+            return self.ipc_client.execute_query(sql, 1000000, 0)  # 获取大量数据
+        
+        def on_exported(response):
+            self._show_progress(False)
+            if response.success:
+                data = response.data
+                if data.get('error'):
+                    QMessageBox.warning(self, "导出失败", data['error'])
+                    return
+                
+                self._export_data_to_csv(file_path, data['columns'], data['data'])
+            else:
+                QMessageBox.warning(self, "导出失败", response.error or "未知错误")
+        
+        self._run_async(do_export, on_exported)
+    
+    def _export_data_to_csv(self, file_path: str, columns: list, data: list):
+        """导出数据到CSV文件"""
+        try:
+            import csv
+            with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                # 写入表头
+                writer.writerow(columns)
+                # 写入数据
+                for row in data:
+                    writer.writerow(row)
+            self._show_status(f"已导出到: {file_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"写入文件失败: {e}")
+    
+    def _on_column_jump(self, table_name: str, column_name: str):
+        """跳转到指定表的列"""
+        # 先确保表已打开
+        tab_index = -1
+        for i in range(self.data_tabs.count()):
+            if self.data_tabs.tabText(i) == table_name:
+                tab_index = i
+                break
+        
+        if tab_index == -1:
+            # 打开表
+            self._on_table_open(table_name)
+            # 延迟执行跳转
+            QTimer.singleShot(500, lambda: self._jump_to_column(table_name, column_name))
+        else:
+            self.data_tabs.setCurrentIndex(tab_index)
+            self._jump_to_column(table_name, column_name)
+    
+    def _jump_to_column(self, table_name: str, column_name: str):
+        """跳转到指定列"""
+        current_widget = self.data_tabs.currentWidget()
+        if isinstance(current_widget, DataTableWidget):
+            columns = current_widget.model.columns
+            if column_name in columns:
+                col_index = columns.index(column_name)
+                # 滚动到该列
+                current_widget.table_view.scrollTo(
+                    current_widget.model.index(0, col_index)
+                )
+                # 选中第一行该列的单元格
+                current_widget.table_view.setCurrentIndex(
+                    current_widget.model.index(0, col_index)
+                )
+                self._show_status(f"已跳转到列: {column_name}")
+    
+    def _show_column_search(self):
+        """显示列搜索栏"""
+        self.column_search_bar.setVisible(True)
+        self.column_search_input.setFocus()
+        self.column_search_input.selectAll()
+        # 更新自动补全列表
+        self._update_column_completer()
+    
+    def _hide_column_search(self):
+        """隐藏列搜索栏"""
+        self.column_search_bar.setVisible(False)
+        self.column_search_input.clear()
+    
+    def _update_column_completer(self):
+        """更新列搜索自动补全列表"""
+        all_columns = self.sidebar.get_all_columns()
+        model = QStringListModel(all_columns)
+        self.column_completer.setModel(model)
+    
+    def _on_column_search_enter(self):
+        """列搜索回车事件"""
+        text = self.column_search_input.text().strip()
+        if text:
+            self._on_column_selected(text)
+    
+    def _on_column_selected(self, text: str):
+        """选择列进行跳转"""
+        # 解析 "表名.列名" 格式
+        if '.' in text:
+            parts = text.split('.', 1)
+            if len(parts) == 2:
+                table_name, column_name = parts
+                self._on_column_jump(table_name, column_name)
+                self._hide_column_search()
     
     # === 表操作 ===
     
@@ -1345,11 +1577,32 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """关闭事件"""
         # 自动保存工作区
-        self._save_workspace()
+        try:
+            self._save_workspace()
+        except:
+            pass
+        
+        # 停止所有异步工作线程
+        for worker in self._workers:
+            try:
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait(1000)
+            except:
+                pass
+        self._workers.clear()
         
         # 停止后端
         try:
             self.ipc_client.stop()
+        except:
+            pass
+        
+        # 移除事件过滤器
+        try:
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
         except:
             pass
         

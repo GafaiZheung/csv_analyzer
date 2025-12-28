@@ -351,22 +351,57 @@ class IPCClient:
         
         # 发送关闭消息
         try:
-            self.send_message(MessageType.SHUTDOWN, {})
+            self.send_message(MessageType.SHUTDOWN, {}, timeout=2.0)
         except:
             pass
         
-        # 等待进程结束
-        self.backend_process.join(timeout=5)
+        # 等待响应监听线程结束
+        if self._response_listener is not None:
+            try:
+                self._response_listener.join(timeout=1.0)
+            except:
+                pass
+            self._response_listener = None
         
+        # 等待进程结束
+        try:
+            self.backend_process.join(timeout=3)
+        except:
+            pass
+        
+        # 如果进程还活着，强制终止
         if self.backend_process.is_alive():
-            self.backend_process.terminate()
+            try:
+                self.backend_process.terminate()
+                self.backend_process.join(timeout=1)
+            except:
+                pass
+        
+        # 清理队列
+        try:
+            if self.request_queue is not None:
+                self.request_queue.close()
+                self.request_queue.join_thread()
+        except:
+            pass
+        
+        try:
+            if self.response_queue is not None:
+                self.response_queue.close()
+                self.response_queue.join_thread()
+        except:
+            pass
         
         self.backend_process = None
+        self.request_queue = None
+        self.response_queue = None
     
     def _listen_responses(self):
         """监听响应的线程"""
         while self._running:
             try:
+                if self.response_queue is None:
+                    break
                 response_dict = self.response_queue.get(timeout=0.1)
                 response = Response(
                     request_id=response_dict["request_id"],
@@ -382,8 +417,12 @@ class IPCClient:
                         
             except queue.Empty:
                 continue
+            except (OSError, ValueError, EOFError):
+                # 队列已关闭
+                break
             except Exception as e:
-                print(f"Response listener error: {e}")
+                if self._running:
+                    print(f"Response listener error: {e}")
     
     def _generate_request_id(self) -> str:
         """生成请求ID"""

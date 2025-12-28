@@ -428,23 +428,7 @@ def get_main_stylesheet() -> str:
         background-color: transparent;
     }}
     
-    /* 折叠状态 - 向右箭头 */
-    QTreeView::branch:has-children:!has-siblings:closed,
-    QTreeView::branch:closed:has-children:has-siblings,
-    QTreeWidget::branch:has-children:!has-siblings:closed,
-    QTreeWidget::branch:closed:has-children:has-siblings {{
-        border-image: none;
-        image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0iIzg1ODU4NSI+PHBhdGggZD0iTTYgNGw0IDQtNCA0eiIvPjwvc3ZnPg==);
-    }}
-    
-    /* 展开状态 - 向下箭头 */
-    QTreeView::branch:open:has-children:!has-siblings,
-    QTreeView::branch:open:has-children:has-siblings,
-    QTreeWidget::branch:open:has-children:!has-siblings,
-    QTreeWidget::branch:open:has-children:has-siblings {{
-        border-image: none;
-        image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0iIzg1ODU4NSI+PHBhdGggZD0iTTQgNmw0IDQgNC00eiIvPjwvc3ZnPg==);
-    }}
+    /* 折叠/展开图标使用自定义绘制，不设置image */
     
     /* 表格视图 */
     QTableView, QTableWidget {{

@@ -71,6 +71,7 @@ class SidebarWidget(QWidget):
     table_delete_requested = pyqtSignal(str)  # 请求删除表
     view_delete_requested = pyqtSignal(str)  # 请求删除视图
     refresh_requested = pyqtSignal()  # 请求刷新
+    view_export_requested = pyqtSignal(str, str)  # 视图名, SQL - 请求导出视图
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,13 +117,24 @@ class SidebarWidget(QWidget):
         
         self.tables_tree = QTreeWidget()
         self.tables_tree.setHeaderHidden(True)
-        self.tables_tree.setIndentation(18)  # 增加缩进以便展开图标可见
+        self.tables_tree.setIndentation(20)  # 增加缩进以便展开图标可见
         self.tables_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tables_tree.customContextMenuRequested.connect(self._show_table_context_menu)
         self.tables_tree.itemClicked.connect(self._on_table_clicked)
         self.tables_tree.itemDoubleClicked.connect(self._on_table_double_clicked)
         self._tables_tree_style = ChevronTreeStyle(self.tables_tree.style())
         self.tables_tree.setStyle(self._tables_tree_style)
+        # 确保自定义样式绘制的展开图标能显示
+        self.tables_tree.setStyleSheet(f"""
+            QTreeWidget::branch {{
+                background-color: transparent;
+            }}
+            QTreeWidget::branch:has-children:closed,
+            QTreeWidget::branch:has-children:open {{
+                image: none;
+                border-image: none;
+            }}
+        """)
         layout.addWidget(self.tables_tree)
         
         # 视图区域
@@ -138,13 +150,24 @@ class SidebarWidget(QWidget):
         
         self.views_tree = QTreeWidget()
         self.views_tree.setHeaderHidden(True)
-        self.views_tree.setIndentation(18)  # 增加缩进以便展开图标可见
+        self.views_tree.setIndentation(20)  # 增加缩进以便展开图标可见
         self.views_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.views_tree.customContextMenuRequested.connect(self._show_view_context_menu)
         self.views_tree.itemClicked.connect(self._on_view_clicked)
         self.views_tree.itemDoubleClicked.connect(self._on_view_double_clicked)
         self._views_tree_style = ChevronTreeStyle(self.views_tree.style())
         self.views_tree.setStyle(self._views_tree_style)
+        # 确保自定义样式绘制的展开图标能显示
+        self.views_tree.setStyleSheet(f"""
+            QTreeWidget::branch {{
+                background-color: transparent;
+            }}
+            QTreeWidget::branch:has-children:closed,
+            QTreeWidget::branch:has-children:open {{
+                image: none;
+                border-image: none;
+            }}
+        """)
         layout.addWidget(self.views_tree)
         
         # 设置样式
@@ -292,6 +315,11 @@ class SidebarWidget(QWidget):
         
         menu.addSeparator()
         
+        export_action = menu.addAction("导出为CSV...")
+        export_action.triggered.connect(lambda: self._export_view(view_name, sql))
+        
+        menu.addSeparator()
+        
         delete_action = menu.addAction("删除视图")
         delete_action.triggered.connect(lambda: self.view_delete_requested.emit(view_name))
         
@@ -301,3 +329,16 @@ class SidebarWidget(QWidget):
         """为表创建查询"""
         sql = f'SELECT * FROM "{table_name}"'
         self.view_double_clicked.emit(f"Query_{table_name}", sql)
+    
+    def _export_view(self, view_name: str, sql: str):
+        """导出视图为CSV"""
+        self.view_export_requested.emit(view_name, sql)
+    
+    def get_all_columns(self) -> list:
+        """获取所有表的列名列表（格式：表名.列名）"""
+        all_columns = []
+        for table_name, table_info in self._tables.items():
+            for col in table_info.get('columns', []):
+                col_name = col['name']
+                all_columns.append(f"{table_name}.{col_name}")
+        return all_columns
