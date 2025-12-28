@@ -346,6 +346,30 @@ class IconManager:
                 <line x1="8" y1="11" x2="14" y2="11"/>
             </svg>
         """,
+
+        # 窗口控制（无边框标题栏用）
+        "window_minimize": """
+            <svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round">
+                <line x1="6" y1="18" x2="18" y2="18"/>
+            </svg>
+        """,
+        "window_maximize": """
+            <svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linejoin="round">
+                <rect x="6" y="6" width="12" height="12" rx="1"/>
+            </svg>
+        """,
+        "window_restore": """
+            <svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linejoin="round">
+                <rect x="7" y="9" width="10" height="10" rx="1"/>
+                <path d="M9 9V7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7h-2"/>
+            </svg>
+        """,
+        "window_close": """
+            <svg viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round">
+                <line x1="7" y1="7" x2="17" y2="17"/>
+                <line x1="17" y1="7" x2="7" y2="17"/>
+            </svg>
+        """,
     }
     
     @classmethod

@@ -70,7 +70,7 @@ class SidebarWidget(QWidget):
         
         self.tables_tree = QTreeWidget()
         self.tables_tree.setHeaderHidden(True)
-        self.tables_tree.setIndentation(14)
+        self.tables_tree.setIndentation(18)  # 增加缩进以便展开图标可见
         self.tables_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tables_tree.customContextMenuRequested.connect(self._show_table_context_menu)
         self.tables_tree.itemClicked.connect(self._on_table_clicked)
@@ -90,7 +90,7 @@ class SidebarWidget(QWidget):
         
         self.views_tree = QTreeWidget()
         self.views_tree.setHeaderHidden(True)
-        self.views_tree.setIndentation(14)
+        self.views_tree.setIndentation(18)  # 增加缩进以便展开图标可见
         self.views_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.views_tree.customContextMenuRequested.connect(self._show_view_context_menu)
         self.views_tree.itemClicked.connect(self._on_view_clicked)

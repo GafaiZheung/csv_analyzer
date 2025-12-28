@@ -82,6 +82,9 @@ VSCODE_COLORS = {
     # 其他
     "text": "#cccccc",
     "icon_foreground": "#c5c5c5",
+    
+    # macOS Tahoe 风格圆角
+    "window_radius": "10px",
 }
 
 
@@ -90,10 +93,15 @@ def get_main_stylesheet() -> str:
     colors = VSCODE_COLORS
     
     return f"""
-    /* 全局样式 */
+    /* 全局样式 - macOS Tahoe圆角窗口 */
     QMainWindow {{
-        background-color: {colors['background']};
+        background-color: transparent;
         color: {colors['foreground']};
+    }}
+    
+    QMainWindow > QWidget#centralWidget {{
+        background-color: {colors['background']};
+        border-radius: {colors['window_radius']};
     }}
     
     QWidget {{
@@ -164,15 +172,31 @@ def get_main_stylesheet() -> str:
         background-color: {colors['selection']};
     }}
     
-    /* 状态栏 */
+    /* 状态栏 - 底部圆角 */
     QStatusBar {{
         background-color: {colors['statusbar_bg']};
         color: white;
         border: none;
+        min-height: 22px;
+        padding: 0px 12px;
+        border-bottom-left-radius: {colors['window_radius']};
+        border-bottom-right-radius: {colors['window_radius']};
     }}
     
     QStatusBar::item {{
         border: none;
+    }}
+
+    QLabel#statusText {{
+        color: white;
+        padding: 0px;
+        margin: 0px;
+    }}
+
+    QLabel#backendStatus {{
+        color: white;
+        padding: 0px;
+        margin: 0px;
     }}
     
     /* 分割器 */
@@ -234,6 +258,7 @@ def get_main_stylesheet() -> str:
     /* Tab Widget */
     QTabWidget::tab-bar {{
         left: 0px;
+        background-color: {colors['editor_bg']};
     }}
 
     QTabWidget::pane {{
@@ -242,12 +267,12 @@ def get_main_stylesheet() -> str:
     }}
 
     QTabBar {{
-        background-color: {colors['tab_inactive_bg']};
+        background-color: {colors['editor_bg']};
         border: none;
     }}
 
     QTabBar::scroller {{
-        background-color: {colors['tab_inactive_bg']};
+        background-color: {colors['editor_bg']};
         border: none;
     }}
     
@@ -393,8 +418,26 @@ def get_main_stylesheet() -> str:
         background-color: {colors['hover']};
     }}
     
-    QTreeView::branch {{
+    QTreeView::branch, QTreeWidget::branch {{
         background-color: transparent;
+    }}
+    
+    /* 折叠状态 - 向右箭头 */
+    QTreeView::branch:has-children:!has-siblings:closed,
+    QTreeView::branch:closed:has-children:has-siblings,
+    QTreeWidget::branch:has-children:!has-siblings:closed,
+    QTreeWidget::branch:closed:has-children:has-siblings {{
+        border-image: none;
+        image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0iIzg1ODU4NSI+PHBhdGggZD0iTTYgNGw0IDQtNCA0eiIvPjwvc3ZnPg==);
+    }}
+    
+    /* 展开状态 - 向下箭头 */
+    QTreeView::branch:open:has-children:!has-siblings,
+    QTreeView::branch:open:has-children:has-siblings,
+    QTreeWidget::branch:open:has-children:!has-siblings,
+    QTreeWidget::branch:open:has-children:has-siblings {{
+        border-image: none;
+        image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0iIzg1ODU4NSI+PHBhdGggZD0iTTQgNmw0IDQgNC00eiIvPjwvc3ZnPg==);
     }}
     
     /* 表格视图 */
@@ -457,6 +500,19 @@ def get_main_stylesheet() -> str:
     QProgressBar::chunk {{
         background-color: {colors['statusbar_bg']};
         border-radius: 2px;
+    }}
+
+    /* 状态栏进度条（更接近 VSCode：细、扁、无文字） */
+    QProgressBar#statusProgress {{
+        background-color: {colors['highlight']};
+        border: 1px solid {colors['highlight']};
+        border-radius: 3px;
+        padding: 0px;
+    }}
+
+    QProgressBar#statusProgress::chunk {{
+        background-color: {colors['foreground']};
+        border-radius: 3px;
     }}
     
     /* 工具提示 */
