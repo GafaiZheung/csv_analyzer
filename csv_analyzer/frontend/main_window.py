@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenuBar, QMenu, QToolBar, QStatusBar, QFileDialog,
     QTabWidget, QMessageBox, QInputDialog, QLabel, QProgressBar,
-    QApplication, QToolButton, QFrame, QTabBar
+    QApplication, QToolButton, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QEvent, QRect
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPainter, QColor, QPen
@@ -230,8 +230,8 @@ class MainWindow(QMainWindow):
     def _setup_ui(self):
         """设置UI"""
         self.setWindowTitle("CSV Analyzer")
-        self.setMinimumSize(1200, 800)
-        self.resize(1400, 900)
+        self.setMinimumSize(1200, 600)
+        self.resize(1400, 800)
 
         if self._frameless_enabled:
             # 开启无边框窗口（自定义标题栏/按钮/拖拽/缩放）
@@ -288,11 +288,9 @@ class MainWindow(QMainWindow):
         
         # 数据表格Tab（标签靠左）
         self.data_tabs = QTabWidget()
-        # 使用自定义关闭按钮（只显示当前Tab的关闭按钮）
-        self.data_tabs.setTabsClosable(False)
+        self.data_tabs.setTabsClosable(True)
         self.data_tabs.setMovable(True)
         self.data_tabs.setDocumentMode(True)
-        self.data_tabs.currentChanged.connect(lambda _: self._update_tab_close_buttons())
         # 标签靠左对齐
         self.data_tabs.tabBar().setExpanding(False)
         self.center_splitter.addWidget(self.data_tabs)
@@ -404,7 +402,7 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar()
         toolbar.setMovable(False)
         is_macos = platform.system() == 'Darwin'
-        toolbar.setIconSize(QSize(16, 16) if is_macos else QSize(16, 16))
+        toolbar.setIconSize(QSize(20, 20) if is_macos else QSize(20, 20))
 
         # macOS: 缩窄顶栏高度以保持视觉平衡
         if is_macos:
@@ -416,7 +414,7 @@ class MainWindow(QMainWindow):
                     background-color: {VSCODE_COLORS['titlebar_bg']};
                     border: none;
                     spacing: 2px;
-                    padding: 0px 8px;
+                    padding: 0px 4px;
                     min-height: 28px;
                     max-height: 28px;
                     border-top-left-radius: {top_radius};
@@ -766,6 +764,12 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.statusbar.addPermanentWidget(self.progress_bar)
         
+        # 单元格位置
+        self.cell_position_label = QLabel("")
+        self.cell_position_label.setObjectName("cellPosition")
+        self.cell_position_label.setMinimumWidth(150)
+        self.statusbar.addPermanentWidget(self.cell_position_label)
+        
         # 后端状态
         self.backend_status = QLabel("后端：未启动")
         self.backend_status.setObjectName("backendStatus")
@@ -782,6 +786,10 @@ class MainWindow(QMainWindow):
         # SQL编辑器信号
         self.sql_editor.execute_requested.connect(self._execute_sql)
         self.sql_editor.save_view_requested.connect(self._save_view)
+        
+        # Tab切换信号
+        self.data_tabs.currentChanged.connect(self._on_tab_changed)
+        self.data_tabs.tabCloseRequested.connect(self._on_tab_close)
     
     def _start_backend(self):
         """启动后端"""
@@ -870,9 +878,17 @@ class MainWindow(QMainWindow):
         # 创建新的数据表格
         table_widget = DataTableWidget()
         table_widget.set_current_table(table_name)  # 设置当前表名
-        table_widget.page_changed.connect(
-            lambda offset, limit: self._load_table_data(table_name, offset, limit, table_widget)
-        )
+        
+        # 使用弱引用避免widget删除后崩溃
+        import weakref
+        weak_widget = weakref.ref(table_widget)
+        
+        def on_page_changed(offset, limit):
+            w = weak_widget()
+            if w is not None:
+                self._load_table_data(table_name, offset, limit, w)
+        
+        table_widget.page_changed.connect(on_page_changed)
         # 连接列右键菜单信号
         table_widget.column_sql_requested.connect(self._on_column_sql_request)
         table_widget.column_selected_for_analysis.connect(self._on_column_analysis_request)
@@ -882,8 +898,6 @@ class MainWindow(QMainWindow):
         # 添加Tab（左侧显示图标）
         index = self.data_tabs.addTab(table_widget, get_icon("table"), table_name)
         self.data_tabs.setCurrentIndex(index)
-        self._attach_tab_close_button(index)
-        self._update_tab_close_buttons()
         
         # 加载数据
         self._current_table = table_name
@@ -897,18 +911,27 @@ class MainWindow(QMainWindow):
         """加载表数据"""
         self._show_status(f"加载数据: {table_name}...")
         
+        import weakref
+        weak_widget = weakref.ref(table_widget)
+        
         def do_load():
             return self.ipc_client.get_table_data(table_name, limit, offset)
         
         def on_loaded(response):
+            w = weak_widget()
+            if w is None:
+                return  # widget已被删除
             if response.success:
                 data = response.data
-                table_widget.set_data(
-                    data['columns'],
-                    data['data'],
-                    data['total_rows']
-                )
-                self._show_status(f"已加载 {len(data['data'])} / {data['total_rows']} 行")
+                try:
+                    w.set_data(
+                        data['columns'],
+                        data['data'],
+                        data['total_rows']
+                    )
+                    self._show_status(f"已加载 {len(data['data'])} / {data['total_rows']} 行")
+                except RuntimeError:
+                    pass  # widget可能已被删除
             else:
                 QMessageBox.warning(self, "加载失败", response.error or "未知错误")
         
@@ -998,10 +1021,43 @@ class MainWindow(QMainWindow):
         self._show_status("执行查询中...")
         self._show_progress(True)
         
+        # 保存SQL用于分页
+        self._current_sql = sql
+        import weakref
+        
         def do_execute():
             return self.ipc_client.execute_query(sql, 1000, 0)
         
-        def on_executed(response):
+        # 复用结果Tab，使用弱引用避免关闭后访问已销毁的控件
+        tab_name = "查询结果"
+        result_widget = None
+        result_index = -1
+        for i in range(self.data_tabs.count()):
+            if self.data_tabs.tabText(i) == tab_name:
+                result_widget = self.data_tabs.widget(i)
+                result_index = i
+                break
+
+        result_widget_ref = None
+
+        if not result_widget:
+            result_widget = DataTableWidget()
+            result_widget_ref = weakref.ref(result_widget)
+
+            def on_page_changed(offset, limit, widget_ref=result_widget_ref):
+                widget = widget_ref()
+                if widget is not None:
+                    self._execute_sql_page(self._current_sql, offset, limit, widget)
+            result_widget.page_changed.connect(on_page_changed)
+            result_widget.cell_selected.connect(self._on_cell_selected)
+            index = self.data_tabs.addTab(result_widget, get_icon("view"), tab_name)
+            self.data_tabs.setCurrentIndex(index)
+        else:
+            result_widget_ref = weakref.ref(result_widget)
+            if result_index >= 0:
+                self.data_tabs.setCurrentIndex(result_index)
+
+        def on_executed(response, widget_ref=result_widget_ref):
             self._show_progress(False)
             
             if response.success:
@@ -1011,32 +1067,16 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "查询错误", data['error'])
                     return
                 
-                # 创建或更新结果Tab
-                tab_name = "查询结果"
-                
-                # 查找已有的结果Tab
-                result_widget = None
-                for i in range(self.data_tabs.count()):
-                    if self.data_tabs.tabText(i) == tab_name:
-                        result_widget = self.data_tabs.widget(i)
-                        self.data_tabs.setCurrentIndex(i)
-                        break
-                
-                if not result_widget:
-                    result_widget = DataTableWidget()
-                    result_widget.page_changed.connect(
-                        lambda offset, limit: self._execute_sql_page(sql, offset, limit, result_widget)
-                    )
-                    index = self.data_tabs.addTab(result_widget, get_icon("view"), tab_name)
-                    self.data_tabs.setCurrentIndex(index)
-                    self._attach_tab_close_button(index)
-                    self._update_tab_close_buttons()
-                
-                result_widget.set_data(
-                    data['columns'],
-                    data['data'],
-                    data['total_rows']
-                )
+                widget = widget_ref() if widget_ref else None
+                if widget is not None:
+                    try:
+                        widget.set_data(
+                            data['columns'],
+                            data['data'],
+                            data['total_rows']
+                        )
+                    except RuntimeError:
+                        widget = None
                 
                 exec_time = data.get('execution_time', 0)
                 self._show_status(f"查询完成: {data['total_rows']} 行, 耗时 {exec_time:.3f}s")
@@ -1047,18 +1087,27 @@ class MainWindow(QMainWindow):
     
     def _execute_sql_page(self, sql: str, offset: int, limit: int, result_widget: DataTableWidget):
         """执行SQL分页查询"""
+        import weakref
+        weak_widget = weakref.ref(result_widget)
+        
         def do_execute():
             return self.ipc_client.execute_query(sql, limit, offset)
         
         def on_executed(response):
+            w = weak_widget()
+            if w is None:
+                return  # widget已被删除
             if response.success:
                 data = response.data
                 if not data.get('error'):
-                    result_widget.set_data(
-                        data['columns'],
-                        data['data'],
-                        data['total_rows']
-                    )
+                    try:
+                        w.set_data(
+                            data['columns'],
+                            data['data'],
+                            data['total_rows']
+                        )
+                    except RuntimeError:
+                        pass  # widget可能已被删除
         
         self._run_async(do_execute, on_executed)
     
@@ -1074,46 +1123,32 @@ class MainWindow(QMainWindow):
     
     def _on_tab_close(self, index: int):
         """关闭Tab"""
-        self.data_tabs.removeTab(index)
-        self._update_tab_close_buttons()
+        if index >= 0 and index < self.data_tabs.count():
+            # 获取widget并断开信号连接
+            widget = self.data_tabs.widget(index)
+            if widget is not None:
+                try:
+                    # 断开所有信号连接，避免后续访问已删除的widget
+                    widget.blockSignals(True)
+                    if hasattr(widget, 'page_changed'):
+                        try:
+                            widget.page_changed.disconnect()
+                        except:
+                            pass
+                    if hasattr(widget, 'cell_selected'):
+                        try:
+                            widget.cell_selected.disconnect()
+                        except:
+                            pass
+                except:
+                    pass
+            
+            self.data_tabs.removeTab(index)
+            
+            # 显式删除widget
+            if widget is not None:
+                widget.deleteLater()
 
-    def _attach_tab_close_button(self, index: int):
-        """给Tab添加右侧关闭按钮"""
-        tab_bar = self.data_tabs.tabBar()
-        close_btn = QToolButton(tab_bar)
-        close_btn.setAutoRaise(True)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setIcon(get_icon("clear", size=14))
-        close_btn.setToolTip("关闭")
-        close_btn.setStyleSheet(f"""
-            QToolButton {{
-                background: transparent;
-                padding: 0px;
-            }}
-            QToolButton:hover {{
-                background: {VSCODE_COLORS['hover']};
-                border-radius: 4px;
-            }}
-        """)
-        # 动态计算所在 tab index，避免 Tab 可移动导致 index 变化
-        def _close_current_tab():
-            pt = close_btn.mapTo(tab_bar, close_btn.rect().center())
-            tab_index = tab_bar.tabAt(pt)
-            if tab_index >= 0:
-                self._on_tab_close(tab_index)
-
-        close_btn.clicked.connect(_close_current_tab)
-        tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, close_btn)
-
-    def _update_tab_close_buttons(self):
-        """当前Tab关闭按钮常亮，其它Tab隐藏"""
-        tab_bar = self.data_tabs.tabBar()
-        current = self.data_tabs.currentIndex()
-        for i in range(self.data_tabs.count()):
-            btn = tab_bar.tabButton(i, QTabBar.ButtonPosition.RightSide)
-            if btn is not None:
-                btn.setVisible(i == current)
-    
     def _on_refresh(self):
         """刷新"""
         self._refresh_tables()
@@ -1157,9 +1192,32 @@ class MainWindow(QMainWindow):
         # 更新单元格检查器
         self.cell_inspector.set_cell_value(row, col, column_name, value)
         
-        # 加载列分析
-        if column_name and self._current_table:
-            self._load_column_analysis(column_name)
+        # 显示单元格位置（行、列从1开始）
+        self.cell_position_label.setText(f"行: {row + 1}, 列: {col + 1} ({column_name})")
+        
+        # 获取当前widget进行分析
+        current_widget = self.data_tabs.currentWidget()
+        if isinstance(current_widget, DataTableWidget) and column_name:
+            # 从当前widget获取数据进行本地分析
+            self._load_column_analysis_from_widget(column_name, current_widget)
+    
+    def _on_tab_changed(self, index: int):
+        """处理Tab切换"""
+        if index < 0 or index >= self.data_tabs.count():
+            self.cell_position_label.setText("")
+            return
+        
+        # 获取当前标签的widget
+        widget = self.data_tabs.widget(index)
+        if isinstance(widget, DataTableWidget):
+            # 连接单元格选中信号（如果还未连接）
+            try:
+                widget.cell_selected.disconnect(self._on_cell_selected)
+            except:
+                pass
+            widget.cell_selected.connect(self._on_cell_selected)
+            # 清除单元格位置显示
+            self.cell_position_label.setText("")
     
     def _on_column_sql_request(self, table_name: str, column_name: str, sql_type: str):
         """处理列快速SQL请求"""
@@ -1170,8 +1228,8 @@ class MainWindow(QMainWindow):
         
         # 根据sql_type生成SQL
         sql_templates = {
-            "order_asc": f'SELECT * FROM "{table_name}" ORDER BY "{column_name}" ASC LIMIT 1000',
-            "order_desc": f'SELECT * FROM "{table_name}" ORDER BY "{column_name}" DESC LIMIT 1000',
+            "order_asc": f'SELECT * FROM "{table_name}" ORDER BY "{column_name}" ASC',
+            "order_desc": f'SELECT * FROM "{table_name}" ORDER BY "{column_name}" DESC',
             "distinct": f'SELECT DISTINCT "{column_name}" FROM "{table_name}" ORDER BY "{column_name}"',
             "count": f'SELECT "{column_name}", COUNT(*) as count FROM "{table_name}" GROUP BY "{column_name}" ORDER BY count DESC',
             "group_by": f'SELECT "{column_name}", COUNT(*) as count FROM "{table_name}" GROUP BY "{column_name}" ORDER BY count DESC',
@@ -1204,6 +1262,67 @@ class MainWindow(QMainWindow):
                 self.cell_inspector.set_column_analysis(column_name, response.data)
         
         self._run_async(do_analyze, on_analyzed)
+    
+    def _load_column_analysis_from_widget(self, column_name: str, widget: DataTableWidget):
+        """从widget数据本地计算列分析"""
+        try:
+            column_data = widget.get_column_data(column_name)
+            if not column_data:
+                return
+            
+            # 本地计算统计信息
+            import statistics
+            
+            total_rows = len(column_data)
+            missing_count = sum(1 for v in column_data if v is None or str(v) == 'NULL' or str(v) == '')
+            non_null_values = [v for v in column_data if v is not None and str(v) != 'NULL' and str(v) != '']
+            unique_count = len(set(str(v) for v in non_null_values))
+            missing_pct = (missing_count / total_rows * 100) if total_rows > 0 else 0
+            
+            # 判断数据类型
+            numeric_values = []
+            for v in non_null_values:
+                try:
+                    numeric_values.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+            
+            is_numeric = len(numeric_values) > len(non_null_values) * 0.5
+            
+            analysis = {
+                'dtype': 'numeric' if is_numeric else 'text',
+                'total_rows': total_rows,
+                'unique_count': unique_count,
+                'missing_count': missing_count,
+                'missing_percentage': missing_pct,
+                'is_numeric': is_numeric,
+            }
+            
+            # 数值统计 - 使用 numeric_stats 字典格式
+            if is_numeric and numeric_values:
+                numeric_stats = {
+                    'min': min(numeric_values),
+                    'max': max(numeric_values),
+                    'mean': statistics.mean(numeric_values),
+                    'median': statistics.median(numeric_values),
+                }
+                if len(numeric_values) > 1:
+                    numeric_stats['std'] = statistics.stdev(numeric_values)
+                    sorted_vals = sorted(numeric_values)
+                    n = len(sorted_vals)
+                    numeric_stats['q1'] = sorted_vals[n // 4]
+                    numeric_stats['q3'] = sorted_vals[3 * n // 4]
+                analysis['numeric_stats'] = numeric_stats
+            
+            # Top值统计 - 使用元组列表格式 [(value, count), ...]
+            from collections import Counter
+            value_counts = Counter(str(v) for v in non_null_values)
+            top_values = value_counts.most_common(10)
+            analysis['top_values'] = top_values  # 保持元组格式
+            
+            self.cell_inspector.set_column_analysis(column_name, analysis)
+        except Exception as e:
+            print(f"本地列分析失败: {e}")
     
     def _show_about(self):
         """显示关于对话框"""
@@ -1314,9 +1433,20 @@ class MainWindow(QMainWindow):
             if os.path.exists(filepath):
                 self._load_csv_file(filepath, show_tab=False)
         
+        # 恢复视图
+        if config.views:
+            def restore_views():
+                for view_name, sql in config.views.items():
+                    try:
+                        self.ipc_client.save_view(view_name, sql)
+                    except:
+                        pass
+                self._refresh_tables()
+            QTimer.singleShot(600, restore_views)
+        
         # 恢复当前表
         if config.current_table:
-            QTimer.singleShot(500, lambda: self._on_table_open(config.current_table))
+            QTimer.singleShot(700, lambda: self._on_table_open(config.current_table))
         
         self._show_status("工作区已加载")
     

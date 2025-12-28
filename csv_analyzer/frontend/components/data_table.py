@@ -43,20 +43,30 @@ class DataTableModel(QAbstractTableModel):
         if not index.isValid():
             return None
         
+        row, col = index.row(), index.column()
+        
+        # 边界检查
+        if row < 0 or row >= len(self._data):
+            return None
+        if col < 0 or col >= len(self._columns):
+            return None
+        if col >= len(self._data[row]):
+            return None
+        
         if role == Qt.ItemDataRole.DisplayRole:
-            value = self._data[index.row()][index.column()]
+            value = self._data[row][col]
             if value is None:
                 return "NULL"
             return str(value)
         
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            value = self._data[index.row()][index.column()]
+            value = self._data[row][col]
             if isinstance(value, (int, float)):
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         
         if role == Qt.ItemDataRole.ForegroundRole:
-            value = self._data[index.row()][index.column()]
+            value = self._data[row][col]
             if value is None:
                 from PyQt6.QtGui import QColor
                 return QColor(VSCODE_COLORS['text_inactive'])
@@ -79,6 +89,10 @@ class DataTableModel(QAbstractTableModel):
     @property
     def columns(self) -> List[str]:
         return self._columns
+    
+    def get_raw_data(self) -> List[List[Any]]:
+        """获取原始数据"""
+        return self._data
 
 
 class DataTableWidget(QWidget):
@@ -232,6 +246,22 @@ class DataTableWidget(QWidget):
         
         # 自动调整列宽
         self._auto_resize_columns()
+    
+    def get_column_data(self, column_name: str) -> List[Any]:
+        """获取指定列的所有数据"""
+        try:
+            columns = self.model.columns
+            if column_name not in columns:
+                return []
+            col_idx = columns.index(column_name)
+            raw_data = self.model.get_raw_data()
+            return [row[col_idx] for row in raw_data if col_idx < len(row)]
+        except:
+            return []
+    
+    def get_current_data(self) -> tuple:
+        """获取当前数据（列名，数据）"""
+        return self.model.columns, self.model.get_raw_data()
     
     def _auto_resize_columns(self):
         """自动调整列宽"""

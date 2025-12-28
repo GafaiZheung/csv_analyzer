@@ -177,8 +177,8 @@ def get_main_stylesheet() -> str:
         background-color: {colors['statusbar_bg']};
         color: white;
         border: none;
-        min-height: 22px;
-        padding: 0px 12px;
+        min-height: 20px;
+        padding: 2px 10px;
         border-bottom-left-radius: {colors['window_radius']};
         border-bottom-right-radius: {colors['window_radius']};
     }}
@@ -196,6 +196,12 @@ def get_main_stylesheet() -> str:
     QLabel#backendStatus {{
         color: white;
         padding: 0px;
+        margin: 0px;
+    }}
+    
+    QLabel#cellPosition {{
+        color: white;
+        padding: 0px 8px;
         margin: 0px;
     }}
     
@@ -277,7 +283,7 @@ def get_main_stylesheet() -> str:
     }}
     
     QTabBar::tab {{
-        background-color: {colors['tab_inactive_bg']};
+        background-color: transparent;
         color: {colors['text_secondary']};
         border: none;
         padding: 8px 16px;
@@ -504,15 +510,20 @@ def get_main_stylesheet() -> str:
 
     /* 状态栏进度条（更接近 VSCode：细、扁、无文字） */
     QProgressBar#statusProgress {{
-        background-color: {colors['highlight']};
-        border: 1px solid {colors['highlight']};
-        border-radius: 3px;
+        background-color: rgba(255, 255, 255, 0.2);
+        border: none;
+        border-radius: 999px;
         padding: 0px;
+        min-width: 150px;
+        max-width: 200px;
+        min-height: 6px;
+        max-height: 6px;
     }}
 
     QProgressBar#statusProgress::chunk {{
-        background-color: {colors['foreground']};
-        border-radius: 3px;
+        background-color: rgba(255, 255, 255, 0.8);
+        border-radius: 999px;
+        margin: 0px;
     }}
     
     /* 工具提示 */

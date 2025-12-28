@@ -5,13 +5,59 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QLabel, QMenu, QPushButton, QLineEdit, QFrame
+    QLabel, QMenu, QPushButton, QLineEdit, QFrame, QProxyStyle, QStyle
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QAction, QFont
+from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPen, QPainterPath, QPainter
 
 from csv_analyzer.frontend.styles.theme import VSCODE_COLORS
 from csv_analyzer.frontend.styles.icons import get_icon
+
+
+class ChevronTreeStyle(QProxyStyle):
+    """自定义树形控件样式，使用 > / v 箭头指示展开状态"""
+
+    def __init__(self, base_style=None):
+        super().__init__(base_style)
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
+            if not option.state & QStyle.StateFlag.State_Children:
+                return super().drawPrimitive(element, option, painter, widget)
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            color = QColor(VSCODE_COLORS['text_secondary'])
+            if option.state & QStyle.StateFlag.State_MouseOver:
+                color = QColor(VSCODE_COLORS['foreground'])
+            pen = QPen(color)
+            pen.setWidthF(1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            rect = option.rect
+            size = max(4.0, min(rect.width(), rect.height()) * 0.35)
+            cx = rect.center().x()
+            cy = rect.center().y()
+            path = QPainterPath()
+
+            if option.state & QStyle.StateFlag.State_Open:
+                path.moveTo(cx - size, cy - size * 0.1)
+                path.lineTo(cx, cy + size)
+                path.lineTo(cx + size, cy - size * 0.1)
+            else:
+                path.moveTo(cx - size * 0.2, cy - size)
+                path.lineTo(cx + size, cy)
+                path.lineTo(cx - size * 0.2, cy + size)
+
+            painter.drawPath(path)
+            painter.restore()
+            return
+
+        return super().drawPrimitive(element, option, painter, widget)
 
 
 class SidebarWidget(QWidget):
@@ -75,6 +121,8 @@ class SidebarWidget(QWidget):
         self.tables_tree.customContextMenuRequested.connect(self._show_table_context_menu)
         self.tables_tree.itemClicked.connect(self._on_table_clicked)
         self.tables_tree.itemDoubleClicked.connect(self._on_table_double_clicked)
+        self._tables_tree_style = ChevronTreeStyle(self.tables_tree.style())
+        self.tables_tree.setStyle(self._tables_tree_style)
         layout.addWidget(self.tables_tree)
         
         # 视图区域
@@ -95,6 +143,8 @@ class SidebarWidget(QWidget):
         self.views_tree.customContextMenuRequested.connect(self._show_view_context_menu)
         self.views_tree.itemClicked.connect(self._on_view_clicked)
         self.views_tree.itemDoubleClicked.connect(self._on_view_double_clicked)
+        self._views_tree_style = ChevronTreeStyle(self.views_tree.style())
+        self.views_tree.setStyle(self._views_tree_style)
         layout.addWidget(self.views_tree)
         
         # 设置样式
