@@ -336,6 +336,105 @@ class DataAnalyzer:
         
         return result
     
+    def analyze_column_from_sql(self, sql: str, column_name: str) -> Dict[str, Any]:
+        """
+        通过SQL查询分析指定列的详细统计信息
+        
+        Args:
+            sql: SQL查询语句
+            column_name: 列名
+            
+        Returns:
+            Dict: 列分析结果
+        """
+        conn = self._engine._conn
+        
+        # 使用子查询包装原SQL
+        subquery = f"({sql}) AS _subquery"
+        
+        try:
+            # 基础统计
+            base_stats = conn.execute(f'''
+                SELECT 
+                    COUNT(*) as total_count,
+                    COUNT("{column_name}") as non_null_count,
+                    COUNT(DISTINCT "{column_name}") as unique_count
+                FROM {subquery}
+            ''').fetchone()
+            
+            total_count = base_stats[0]
+            non_null_count = base_stats[1]
+            null_count = total_count - non_null_count
+            unique_count = base_stats[2]
+            
+            null_percentage = (null_count / total_count * 100) if total_count > 0 else 0
+            
+            result = {
+                "column_name": column_name,
+                "dtype": "unknown",
+                "total_rows": total_count,
+                "unique_count": unique_count,
+                "missing_count": null_count,
+                "missing_percentage": round(null_percentage, 2),
+                "is_numeric": False,
+                "top_values": []
+            }
+            
+            # 尝试数值统计
+            try:
+                numeric_stats = conn.execute(f'''
+                    SELECT 
+                        MIN(CAST("{column_name}" AS DOUBLE)) as min_val,
+                        MAX(CAST("{column_name}" AS DOUBLE)) as max_val,
+                        AVG(CAST("{column_name}" AS DOUBLE)) as mean_val,
+                        MEDIAN(CAST("{column_name}" AS DOUBLE)) as median_val,
+                        STDDEV(CAST("{column_name}" AS DOUBLE)) as std_val,
+                        QUANTILE_CONT(CAST("{column_name}" AS DOUBLE), 0.25) as q1_val,
+                        QUANTILE_CONT(CAST("{column_name}" AS DOUBLE), 0.75) as q3_val
+                    FROM {subquery}
+                    WHERE "{column_name}" IS NOT NULL
+                ''').fetchone()
+                
+                if numeric_stats[0] is not None:
+                    result["is_numeric"] = True
+                    result["dtype"] = "numeric"
+                    result["numeric_stats"] = {
+                        "min": self._safe_float(numeric_stats[0]),
+                        "max": self._safe_float(numeric_stats[1]),
+                        "mean": self._safe_float(numeric_stats[2]),
+                        "median": self._safe_float(numeric_stats[3]),
+                        "std": self._safe_float(numeric_stats[4]),
+                        "q1": self._safe_float(numeric_stats[5]),
+                        "q3": self._safe_float(numeric_stats[6])
+                    }
+            except Exception:
+                # 不是数值类型，跳过
+                result["dtype"] = "text"
+            
+            # 获取Top值
+            try:
+                top_result = conn.execute(f'''
+                    SELECT "{column_name}" as value, COUNT(*) as count
+                    FROM {subquery}
+                    WHERE "{column_name}" IS NOT NULL
+                    GROUP BY "{column_name}"
+                    ORDER BY count DESC
+                    LIMIT 10
+                ''').fetchall()
+                
+                result["top_values"] = [
+                    (str(row[0]) if row[0] is not None else "NULL", row[1])
+                    for row in top_result
+                ]
+            except Exception as e:
+                print(f"获取Top值时出错: {e}")
+            
+            return result
+            
+        except Exception as e:
+            print(f"分析SQL列时出错: {e}")
+            raise ValueError(f"分析列失败: {e}")
+    
     def get_missing_value_report(self, table_name: str) -> Dict[str, Any]:
         """
         获取缺失值报告

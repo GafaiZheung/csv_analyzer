@@ -176,12 +176,17 @@ class SQLEditor(QPlainTextEdit):
     def _setup_editor(self):
         """设置编辑器"""
         # 字体 - 使用跨平台兼容的等宽字体
-        font = QFont("Menlo", 13)  # macOS上所有系统都有的等宽字体
-        if not font.exactMatch():
-            font = QFont("Consolas", 13)  # Windows
-        if not font.exactMatch():
-            font = QFont("Monaco", 13)  # 备选
+        import platform
+        if platform.system() == 'Windows':
+            font = QFont("Consolas", 11)
+        elif platform.system() == 'Darwin':
+            font = QFont("Menlo", 13)
+        else:
+            font = QFont("Monospace", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
+        # 确保字体大小有效
+        if font.pointSize() <= 0:
+            font.setPointSize(11)
         self.setFont(font)
         
         # Tab设置

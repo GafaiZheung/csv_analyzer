@@ -342,3 +342,13 @@ class SidebarWidget(QWidget):
                 col_name = col['name']
                 all_columns.append(f"{table_name}.{col_name}")
         return all_columns
+    
+    def clear_tables(self):
+        """清空表列表"""
+        self.tables_tree.clear()
+        self._tables.clear()
+    
+    def clear_views(self):
+        """清空视图列表"""
+        self.views_tree.clear()
+        self._views.clear()

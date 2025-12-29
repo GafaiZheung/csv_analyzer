@@ -11,13 +11,14 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenuBar, QMenu, QToolBar, QStatusBar, QFileDialog,
     QTabWidget, QMessageBox, QInputDialog, QLabel, QProgressBar,
-    QApplication, QToolButton, QFrame, QLineEdit, QCompleter
+    QApplication, QToolButton, QFrame, QLineEdit, QCompleter,
+    QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QEvent, QRect, QStringListModel
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPainter, QColor, QPen, QShortcut
 
 from csv_analyzer.core.ipc import IPCClient, MessageType
-from csv_analyzer.core.workspace import WorkspaceManager, WorkspaceConfig
+from csv_analyzer.core.workspace import WorkspaceManager, WorkspaceConfig, WorkspaceInfo
 from csv_analyzer.frontend.styles.theme import get_main_stylesheet, VSCODE_COLORS
 from csv_analyzer.frontend.styles.icons import get_icon
 from csv_analyzer.frontend.components.sidebar import SidebarWidget
@@ -188,7 +189,7 @@ class _WindowDragArea(QWidget):
 class MainWindow(QMainWindow):
     """主窗口"""
     
-    def __init__(self):
+    def __init__(self, workspace_id: Optional[str] = None, show_welcome: bool = False):
         super().__init__()
         
         # IPC客户端
@@ -197,10 +198,27 @@ class MainWindow(QMainWindow):
         # 工作区管理器
         self.workspace_manager = WorkspaceManager()
         
+        # 当前工作区
+        self._current_workspace_id: Optional[str] = workspace_id
+        self._current_workspace_name: str = "未命名工作区"
+        
+        # 是否显示欢迎页
+        self._show_welcome = show_welcome
+        
+        # 工作区修改标记
+        self._workspace_dirty: bool = False
+        self._last_saved_state: Optional[str] = None  # 用于比较状态
+        
+        # 工作区名称到ID的映射
+        self._workspace_name_to_id: Dict[str, str] = {}
+        
         # 当前状态
         self._current_table: Optional[str] = None
         self._workers: list = []
         self._loaded_files: List[str] = []
+        
+        # 表名到文件路径的映射
+        self._table_to_file: Dict[str, str] = {}
 
         # 无边框窗口 + 自定义窗口控制
         self._frameless_enabled = True
@@ -224,11 +242,30 @@ class MainWindow(QMainWindow):
         # 设置快捷键
         self._setup_shortcuts()
         
-        # 启动后端
-        self._start_backend()
+        # 延迟启动后端和加载工作区，确保界面先显示
+        QTimer.singleShot(100, self._delayed_init)
+    
+    def _delayed_init(self):
+        """延迟初始化 - 在界面显示后启动后端和加载工作区"""
+        # 启动后端（异步）
+        def start_backend_async():
+            try:
+                self.ipc_client.start()
+                return True
+            except Exception as e:
+                return str(e)
         
-        # 加载工作区
-        QTimer.singleShot(500, self._load_workspace)
+        def on_backend_started(result):
+            if result is True:
+                self.backend_status.setText("后端：运行中")
+                self._show_status("后端服务已启动")
+                # 后端启动成功后，延迟加载工作区
+                QTimer.singleShot(200, self._load_workspace_async)
+            else:
+                self.backend_status.setText("后端：启动失败")
+                QMessageBox.critical(self, "错误", f"后端启动失败: {result}")
+        
+        self._run_async(start_backend_async, on_backend_started)
     
     def _setup_shortcuts(self):
         """设置快捷键"""
@@ -311,6 +348,17 @@ class MainWindow(QMainWindow):
         # 标签靠左对齐
         self.data_tabs.tabBar().setExpanding(False)
         data_container_layout.addWidget(self.data_tabs)
+        
+        # 欢迎页（在数据区域显示）
+        from csv_analyzer.frontend.components.welcome_page import WelcomePage
+        self.welcome_page = WelcomePage(self.workspace_manager)
+        self.welcome_page.open_file_requested.connect(self._on_open_file)
+        self.welcome_page.new_workspace_requested.connect(lambda: self._create_new_workspace())
+        self.welcome_page.workspace_selected.connect(self._switch_to_workspace)
+        
+        # 如果需要显示欢迎页，添加为初始Tab
+        if self._show_welcome:
+            self.data_tabs.addTab(self.welcome_page, "欢迎")
         
         # 列搜索栏（默认隐藏，按Cmd+F/Ctrl+F显示）
         self.column_search_bar = QWidget()
@@ -414,6 +462,11 @@ class MainWindow(QMainWindow):
         """设置菜单栏"""
         menubar = self.menuBar()
         
+        # Windows平台下默认隐藏菜单栏（使用工具栏代替）
+        is_windows = platform.system() == 'Windows'
+        if is_windows:
+            menubar.setVisible(False)
+        
         # 文件菜单
         file_menu = menubar.addMenu("文件(&F)")
         
@@ -425,6 +478,25 @@ class MainWindow(QMainWindow):
         # 最近打开的文件
         self.recent_menu = file_menu.addMenu("最近打开(&R)")
         self._update_recent_menu()
+        
+        file_menu.addSeparator()
+        
+        # 工作区菜单
+        workspace_menu = file_menu.addMenu("工作区(&W)")
+        
+        new_workspace_action = QAction("新建工作区(&N)...", self)
+        new_workspace_action.triggered.connect(lambda: self._create_new_workspace())
+        workspace_menu.addAction(new_workspace_action)
+        
+        switch_workspace_action = QAction("切换工作区(&S)...", self)
+        switch_workspace_action.triggered.connect(self._show_workspace_picker)
+        workspace_menu.addAction(switch_workspace_action)
+        
+        workspace_menu.addSeparator()
+        
+        rename_workspace_action = QAction("重命名工作区(&R)...", self)
+        rename_workspace_action.triggered.connect(self._rename_current_workspace)
+        workspace_menu.addAction(rename_workspace_action)
         
         file_menu.addSeparator()
         
@@ -632,10 +704,19 @@ class MainWindow(QMainWindow):
         toolbar.addAction(refresh_btn)
         
         # 添加弹性空间（也作为无边框拖拽区）
-        spacer = _WindowDragArea(self)
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
-                     spacer.sizePolicy().verticalPolicy().Preferred)
-        toolbar.addWidget(spacer)
+        spacer_left = _WindowDragArea(self)
+        spacer_left.setSizePolicy(spacer_left.sizePolicy().horizontalPolicy().Expanding,
+                     spacer_left.sizePolicy().verticalPolicy().Preferred)
+        toolbar.addWidget(spacer_left)
+        
+        # 中间：工作区搜索框
+        self._setup_workspace_search(toolbar)
+        
+        # 添加右侧弹性空间
+        spacer_right = _WindowDragArea(self)
+        spacer_right.setSizePolicy(spacer_right.sizePolicy().horizontalPolicy().Expanding,
+                     spacer_right.sizePolicy().verticalPolicy().Preferred)
+        toolbar.addWidget(spacer_right)
         
         # 右侧：视图切换按钮
         # 侧边栏切换
@@ -714,6 +795,43 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched, event):
         """全局事件过滤：实现无边框边缘缩放与边缘光标"""
+        # 处理工作区搜索框事件
+        if hasattr(self, 'workspace_search') and watched == self.workspace_search:
+            et = event.type()
+            if et == QEvent.Type.FocusIn:
+                # 获得焦点时显示下拉列表
+                self._show_workspace_popup()
+                return False
+            elif et == QEvent.Type.FocusOut:
+                # 失去焦点时延迟隐藏（允许点击下拉项）
+                QTimer.singleShot(150, self._hide_workspace_popup)
+                return False
+            elif et == QEvent.Type.KeyPress:
+                key = event.key()
+                if hasattr(self, 'workspace_popup') and self.workspace_popup.isVisible():
+                    if key == Qt.Key.Key_Down:
+                        # 向下导航
+                        current = self.workspace_popup.currentRow()
+                        if current < self.workspace_popup.count() - 1:
+                            self.workspace_popup.setCurrentRow(current + 1)
+                        return True
+                    elif key == Qt.Key.Key_Up:
+                        # 向上导航
+                        current = self.workspace_popup.currentRow()
+                        if current > 0:
+                            self.workspace_popup.setCurrentRow(current - 1)
+                        return True
+                    elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                        # 回车选择
+                        item = self.workspace_popup.currentItem()
+                        if item and item.data(Qt.ItemDataRole.UserRole):
+                            self._on_workspace_item_clicked(item)
+                        return True
+                    elif key == Qt.Key.Key_Escape:
+                        self._hide_workspace_popup()
+                        self.workspace_search.clear()
+                        return True
+        
         if not getattr(self, "_frameless_enabled", False):
             return super().eventFilter(watched, event)
 
@@ -837,6 +955,324 @@ class MainWindow(QMainWindow):
 
         self.setGeometry(geo)
     
+    def _setup_workspace_search(self, toolbar):
+        """设置工作区搜索框"""
+        from csv_analyzer.frontend.styles.icons import get_icon
+        
+        # 工作区搜索容器
+        search_container = QWidget()
+        search_container.setObjectName("workspaceSearchContainer")
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+        
+        # 搜索框容器（带图标）
+        search_box = QWidget()
+        search_box.setFixedWidth(300)
+        search_box.setFixedHeight(26)
+        search_box_layout = QHBoxLayout(search_box)
+        search_box_layout.setContentsMargins(8, 0, 8, 0)
+        search_box_layout.setSpacing(6)
+        
+        # 搜索图标
+        search_icon = QLabel()
+        search_icon.setPixmap(get_icon("search").pixmap(14, 14))
+        search_box_layout.addWidget(search_icon)
+        
+        # 工作区搜索框
+        self.workspace_search = QLineEdit()
+        self.workspace_search.setObjectName("workspaceSearch")
+        self.workspace_search.setPlaceholderText("搜索工作区...")
+        self.workspace_search.setFrame(False)
+        self.workspace_search.setStyleSheet(f"""
+            QLineEdit#workspaceSearch {{
+                background-color: transparent;
+                color: {VSCODE_COLORS['foreground']};
+                border: none;
+                font-size: 12px;
+                padding: 0;
+            }}
+        """)
+        search_box_layout.addWidget(self.workspace_search, 1)
+        
+        # 搜索框容器样式（与标题栏背景融合）
+        search_box.setStyleSheet(f"""
+            QWidget {{
+                background-color: {VSCODE_COLORS['titlebar_bg']};
+                border: 1px solid {VSCODE_COLORS['border']};
+                border-radius: 4px;
+            }}
+            QWidget:focus-within {{
+                border-color: {VSCODE_COLORS['input_focus_border']};
+                background-color: {VSCODE_COLORS['input_bg']};
+            }}
+        """)
+        
+        search_layout.addWidget(search_box)
+        toolbar.addWidget(search_container)
+        
+        # 工作区下拉列表（自定义弹出）
+        self._setup_workspace_popup()
+        
+        # 连接信号
+        self.workspace_search.textChanged.connect(self._on_workspace_search_changed)
+        self.workspace_search.returnPressed.connect(self._on_workspace_search_enter)
+        # 点击时显示下拉列表
+        self.workspace_search.installEventFilter(self)
+    
+    def _setup_workspace_popup(self):
+        """设置工作区下拉列表"""
+        self.workspace_popup = QListWidget()
+        self.workspace_popup.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.workspace_popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.workspace_popup.setMouseTracking(True)
+        self.workspace_popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.workspace_popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.workspace_popup.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {VSCODE_COLORS['dropdown_bg']};
+                border: 1px solid {VSCODE_COLORS['border']};
+                border-radius: 6px;
+                padding: 4px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 8px 12px;
+                border-radius: 4px;
+                color: {VSCODE_COLORS['foreground']};
+            }}
+            QListWidget::item:hover {{
+                background-color: {VSCODE_COLORS['hover']};
+            }}
+            QListWidget::item:selected {{
+                background-color: {VSCODE_COLORS['selection']};
+            }}
+        """)
+        self.workspace_popup.itemClicked.connect(self._on_workspace_item_clicked)
+        self.workspace_popup.currentItemChanged.connect(self._on_workspace_popup_current_changed)
+        self.workspace_popup.hide()
+    
+    def _show_workspace_popup(self):
+        """显示工作区下拉列表"""
+        self.workspace_popup.clear()
+        
+        # 获取工作区列表
+        query = self.workspace_search.text().strip()
+        if query:
+            workspaces = self.workspace_manager.search_workspaces(query)
+        else:
+            workspaces = self.workspace_manager.get_recent_workspaces()
+        
+        # 保存映射
+        self._workspace_name_to_id = {w.name: w.id for w in workspaces}
+        
+        if not workspaces:
+            item = QListWidgetItem("没有找到工作区")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self.workspace_popup.addItem(item)
+        else:
+            for ws in workspaces[:8]:  # 最多显示8个
+                item = QListWidgetItem(f"  {ws.name}")
+                item.setIcon(get_icon("folder"))
+                item.setData(Qt.ItemDataRole.UserRole, ws.id)
+                item.setData(Qt.ItemDataRole.UserRole + 1, ws.name)  # 保存原始名称
+                self.workspace_popup.addItem(item)
+        
+        # 定位到搜索框下方
+        search_rect = self.workspace_search.parent().rect()
+        global_pos = self.workspace_search.parent().mapToGlobal(search_rect.bottomLeft())
+        
+        self.workspace_popup.setFixedWidth(300)
+        self.workspace_popup.setFixedHeight(min(len(workspaces) * 40 + 12, 340))
+        self.workspace_popup.move(global_pos.x(), global_pos.y() + 4)
+        self.workspace_popup.show()
+    
+    def _on_workspace_popup_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+        """下拉列表当前项变化"""
+        # 恢复上一个项的文本
+        if previous and previous.data(Qt.ItemDataRole.UserRole):
+            name = previous.data(Qt.ItemDataRole.UserRole + 1)
+            if name:
+                previous.setText(f"  {name}")
+        
+        # 更新当前项显示"转到工作区"
+        if current and current.data(Qt.ItemDataRole.UserRole):
+            name = current.data(Qt.ItemDataRole.UserRole + 1)
+            if name:
+                current.setText(f"  转到工作区: {name}")
+    
+    def _hide_workspace_popup(self):
+        """隐藏工作区下拉列表"""
+        if hasattr(self, 'workspace_popup'):
+            self.workspace_popup.hide()
+    
+    def _on_workspace_item_clicked(self, item):
+        """点击工作区项"""
+        workspace_id = item.data(Qt.ItemDataRole.UserRole)
+        if workspace_id and workspace_id != self._current_workspace_id:
+            self._switch_to_workspace(workspace_id)
+        self.workspace_search.clear()
+        self._hide_workspace_popup()
+    
+    def _update_workspace_completer(self):
+        """更新工作区补全列表"""
+        workspaces = self.workspace_manager.get_recent_workspaces()
+        # 保存工作区映射
+        self._workspace_name_to_id = {w.name: w.id for w in workspaces}
+    
+    def _on_workspace_search_changed(self, text: str):
+        """工作区搜索文字改变"""
+        self._update_workspace_completer()
+        if self.workspace_search.hasFocus():
+            self._show_workspace_popup()
+    
+    def _on_workspace_selected(self, name: str):
+        """选择工作区"""
+        workspace_id = self._workspace_name_to_id.get(name)
+        if workspace_id and workspace_id != self._current_workspace_id:
+            self._switch_to_workspace(workspace_id)
+        self.workspace_search.clear()
+        self._hide_workspace_popup()
+    
+    def _on_workspace_search_enter(self):
+        """工作区搜索回车"""
+        text = self.workspace_search.text().strip()
+        if not text:
+            return
+        
+        # 检查是否匹配现有工作区
+        if text in self._workspace_name_to_id:
+            self._switch_to_workspace(self._workspace_name_to_id[text])
+        else:
+            # 询问是否创建新工作区
+            reply = QMessageBox.question(
+                self, "创建工作区",
+                f"工作区 \"{text}\" 不存在。\n是否创建新的工作区？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._create_new_workspace(text)
+        
+        self.workspace_search.clear()
+    
+    def _switch_to_workspace(self, workspace_id: str):
+        """切换到指定工作区"""
+        # 先检查当前工作区是否需要保存
+        if self._workspace_dirty:
+            reply = QMessageBox.question(
+                self, "保存工作区",
+                "当前工作区有未保存的更改。\n是否在切换前保存？",
+                QMessageBox.StandardButton.Save | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            elif reply == QMessageBox.StandardButton.Save:
+                self._save_workspace()
+        
+        # 清理当前状态
+        self._clear_current_state()
+        
+        # 加载新工作区
+        self._current_workspace_id = workspace_id
+        self._load_workspace_async()
+        
+        self._update_workspace_completer()
+    
+    def _create_new_workspace(self, name: str = ""):
+        """创建新工作区"""
+        if not name:
+            name, ok = QInputDialog.getText(
+                self, "新建工作区", "请输入工作区名称:",
+                text="新工作区"
+            )
+            if not ok or not name.strip():
+                return
+            name = name.strip()
+        
+        # 创建新工作区
+        config = self.workspace_manager.create_workspace(name)
+        self._current_workspace_id = config.id
+        self._current_workspace_name = config.name
+        self._workspace_dirty = False
+        
+        # 清理当前状态
+        self._clear_current_state()
+        
+        self._update_window_title()
+        self._update_workspace_completer()
+        self._show_status(f"已创建工作区: {name}")
+    
+    def _clear_current_state(self):
+        """清理当前工作区状态"""
+        # 关闭所有标签页
+        while self.data_tabs.count() > 0:
+            self.data_tabs.removeTab(0)
+        
+        # 清空已加载文件
+        self._loaded_files.clear()
+        self._table_to_file.clear()
+        self._current_table = None
+        
+        # 清空SQL编辑器
+        self.sql_editor.set_sql("")
+        
+        # 刷新侧边栏
+        self.sidebar.clear_tables()
+        self.sidebar.clear_views()
+        
+        # 重置修改标记
+        self._workspace_dirty = False
+    
+    def _update_window_title(self):
+        """更新窗口标题"""
+        title = "CSV Analyzer"
+        if self._current_workspace_name:
+            title = f"{self._current_workspace_name} - CSV Analyzer"
+        if self._workspace_dirty:
+            title = f"● {title}"
+        self.setWindowTitle(title)
+    
+    def _mark_workspace_dirty(self):
+        """标记工作区已修改"""
+        if not self._workspace_dirty:
+            self._workspace_dirty = True
+            self._update_window_title()
+    
+    def _show_workspace_picker(self):
+        """显示工作区选择对话框"""
+        from csv_analyzer.frontend.components.workspace_picker import WorkspacePickerDialog
+        from PyQt6.QtWidgets import QDialog
+        
+        picker = WorkspacePickerDialog(self.workspace_manager, self)
+        result = picker.exec()
+        
+        if result == QDialog.DialogCode.Accepted:
+            workspace_id = picker.get_selected_workspace_id()
+            if workspace_id and workspace_id != self._current_workspace_id:
+                self._switch_to_workspace(workspace_id)
+    
+    def _rename_current_workspace(self):
+        """重命名当前工作区"""
+        if not self._current_workspace_id:
+            QMessageBox.warning(self, "无法重命名", "当前没有打开的工作区。")
+            return
+        
+        new_name, ok = QInputDialog.getText(
+            self, "重命名工作区", "请输入新名称:",
+            text=self._current_workspace_name
+        )
+        
+        if ok and new_name.strip():
+            new_name = new_name.strip()
+            self.workspace_manager.rename_workspace(self._current_workspace_id, new_name)
+            self._current_workspace_name = new_name
+            self._update_window_title()
+            self._update_workspace_completer()
+            self._show_status(f"工作区已重命名为: {new_name}")
+    
     def _setup_statusbar(self):
         """设置状态栏"""
         self.statusbar = QStatusBar()
@@ -884,16 +1320,6 @@ class MainWindow(QMainWindow):
         # Tab切换信号
         self.data_tabs.currentChanged.connect(self._on_tab_changed)
         self.data_tabs.tabCloseRequested.connect(self._on_tab_close)
-    
-    def _start_backend(self):
-        """启动后端"""
-        try:
-            self.ipc_client.start()
-            self.backend_status.setText("后端：运行中")
-            self._show_status("后端服务已启动")
-        except Exception as e:
-            self.backend_status.setText("后端：启动失败")
-            QMessageBox.critical(self, "错误", f"后端启动失败: {e}")
     
     def _show_status(self, message: str, timeout: int = 3000):
         """显示状态消息"""
@@ -1187,6 +1613,15 @@ class MainWindow(QMainWindow):
                     if self.data_tabs.tabText(i) == table_name:
                         self.data_tabs.removeTab(i)
                         break
+                
+                # 从已加载文件列表中移除对应的文件
+                if table_name in self._table_to_file:
+                    filepath = self._table_to_file.pop(table_name)
+                    if filepath in self._loaded_files:
+                        self._loaded_files.remove(filepath)
+                
+                # 标记工作区已修改
+                self._mark_workspace_dirty()
             else:
                 QMessageBox.warning(self, "删除失败", response.error or "未知错误")
     
@@ -1215,6 +1650,8 @@ class MainWindow(QMainWindow):
             if response.success:
                 self._show_status(f"已删除视图: {view_name}")
                 self._refresh_tables()
+                # 标记工作区已修改
+                self._mark_workspace_dirty()
             else:
                 QMessageBox.warning(self, "删除失败", response.error or "未知错误")
     
@@ -1237,6 +1674,8 @@ class MainWindow(QMainWindow):
             if response.success:
                 self._show_status(f"已保存视图: {view_name}")
                 self._refresh_tables()
+                # 标记工作区已修改
+                self._mark_workspace_dirty()
             else:
                 QMessageBox.warning(self, "保存失败", response.error or "未知错误")
     
@@ -1274,6 +1713,7 @@ class MainWindow(QMainWindow):
 
         if not result_widget:
             result_widget = DataTableWidget()
+            result_widget.set_current_sql(sql)  # 保存SQL用于列分析
             result_widget_ref = weakref.ref(result_widget)
 
             def on_page_changed(offset, limit, widget_ref=result_widget_ref):
@@ -1285,6 +1725,7 @@ class MainWindow(QMainWindow):
             index = self.data_tabs.addTab(result_widget, get_icon("view"), tab_name)
             self.data_tabs.setCurrentIndex(index)
         else:
+            result_widget.set_current_sql(sql)  # 更新SQL
             result_widget_ref = weakref.ref(result_widget)
             if result_index >= 0:
                 self.data_tabs.setCurrentIndex(result_index)
@@ -1430,8 +1871,19 @@ class MainWindow(QMainWindow):
         # 获取当前widget进行分析
         current_widget = self.data_tabs.currentWidget()
         if isinstance(current_widget, DataTableWidget) and column_name:
-            # 从当前widget获取数据进行本地分析
-            self._load_column_analysis_from_widget(column_name, current_widget)
+            # 检查是表还是查询结果
+            table_name = current_widget.get_current_table()
+            current_sql = current_widget.get_current_sql()
+            
+            if table_name:
+                # 对于表，调用后端分析整个表的列
+                self._load_column_analysis_from_backend(table_name, column_name)
+            elif current_sql:
+                # 对于查询结果，使用SQL分析
+                self._load_column_analysis_from_sql(current_sql, column_name)
+            else:
+                # 回退到本地分析（只分析当前页）
+                self._load_column_analysis_from_widget(column_name, current_widget)
     
     def _on_tab_changed(self, index: int):
         """处理Tab切换"""
@@ -1492,6 +1944,38 @@ class MainWindow(QMainWindow):
         def on_analyzed(response):
             if response.success and response.data:
                 self.cell_inspector.set_column_analysis(column_name, response.data)
+        
+        self._run_async(do_analyze, on_analyzed)
+    
+    def _load_column_analysis_from_backend(self, table_name: str, column_name: str):
+        """从后端加载列分析数据（整个表）"""
+        def do_analyze():
+            return self.ipc_client.analyze_column(table_name, column_name)
+        
+        def on_analyzed(response):
+            if response.success and response.data:
+                self.cell_inspector.set_column_analysis(column_name, response.data)
+            else:
+                # 如果后端分析失败，回退到本地分析
+                current_widget = self.data_tabs.currentWidget()
+                if isinstance(current_widget, DataTableWidget):
+                    self._load_column_analysis_from_widget(column_name, current_widget)
+        
+        self._run_async(do_analyze, on_analyzed)
+    
+    def _load_column_analysis_from_sql(self, sql: str, column_name: str):
+        """从SQL查询加载列分析数据（整个查询结果）"""
+        def do_analyze():
+            return self.ipc_client.analyze_column_sql(sql, column_name)
+        
+        def on_analyzed(response):
+            if response.success and response.data:
+                self.cell_inspector.set_column_analysis(column_name, response.data)
+            else:
+                # 如果后端分析失败，回退到本地分析
+                current_widget = self.data_tabs.currentWidget()
+                if isinstance(current_widget, DataTableWidget):
+                    self._load_column_analysis_from_widget(column_name, current_widget)
         
         self._run_async(do_analyze, on_analyzed)
     
@@ -1576,11 +2060,24 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """关闭事件"""
-        # 自动保存工作区
-        try:
-            self._save_workspace()
-        except:
-            pass
+        # 只在工作区被修改时询问保存
+        if self._workspace_dirty:
+            reply = QMessageBox.question(
+                self, "保存工作区",
+                f"工作区 \"{self._current_workspace_name}\" 有未保存的更改。\n是否保存？",
+                QMessageBox.StandardButton.Save | 
+                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.Save:
+                if not self._save_workspace():
+                    # 保存失败，取消关闭
+                    event.ignore()
+                    return
         
         # 停止所有异步工作线程
         for worker in self._workers:
@@ -1610,9 +2107,27 @@ class MainWindow(QMainWindow):
     
     # === 工作区管理 ===
     
-    def _save_workspace(self):
-        """保存工作区"""
-        config = WorkspaceConfig()
+    def _save_workspace(self) -> bool:
+        """保存工作区，返回是否成功"""
+        # 确保有工作区ID
+        if not self._current_workspace_id:
+            # 创建新工作区
+            name, ok = QInputDialog.getText(
+                self, "保存工作区", "请输入工作区名称:",
+                text="新工作区"
+            )
+            if not ok or not name.strip():
+                return False
+            config = self.workspace_manager.create_workspace(name.strip())
+            self._current_workspace_id = config.id
+            self._current_workspace_name = config.name
+        
+        # 加载现有配置或创建新配置
+        config = self.workspace_manager.load(self._current_workspace_id)
+        if not config.id or config.id != self._current_workspace_id:
+            config = WorkspaceConfig()
+            config.id = self._current_workspace_id
+            config.name = self._current_workspace_name
         
         # 保存已加载的文件
         config.loaded_files = self._loaded_files.copy()
@@ -1652,14 +2167,33 @@ class MainWindow(QMainWindow):
         except:
             pass
         
-        self.workspace_manager.save(config)
-        self._show_status("工作区已保存")
-    
-    def _load_workspace(self):
-        """加载工作区"""
-        config = self.workspace_manager.load()
+        # 执行保存
+        success = self.workspace_manager.save(config)
         
-        # 恢复面板可见性
+        if success:
+            # 清除修改标记
+            self._workspace_dirty = False
+            self._update_window_title()
+            self._show_status(f"工作区 \"{self._current_workspace_name}\" 已保存")
+            return True
+        else:
+            QMessageBox.warning(self, "保存失败", "无法保存工作区，请检查磁盘空间和权限。")
+            return False
+    
+    def _load_workspace_async(self):
+        """异步加载工作区 - 不阻塞UI"""
+        config = self.workspace_manager.load(self._current_workspace_id)
+        
+        # 更新当前工作区信息
+        if config.id:
+            self._current_workspace_id = config.id
+            self._current_workspace_name = config.name
+        
+        # 重置修改标记
+        self._workspace_dirty = False
+        self._update_window_title()
+        
+        # 恢复面板可见性（快速，不阻塞）
         vis = config.panel_visibility
         if 'sidebar' in vis:
             self.sidebar.setVisible(vis['sidebar'])
@@ -1671,37 +2205,101 @@ class MainWindow(QMainWindow):
             self.sql_editor.setVisible(vis['sql_editor'])
             self.toggle_sql_btn.setChecked(vis['sql_editor'])
         
-        # 恢复分割器状态
+        # 恢复分割器状态（快速，不阻塞）
         if 'main' in config.splitter_sizes:
             self.main_splitter.setSizes(config.splitter_sizes['main'])
         if 'center' in config.splitter_sizes:
             self.center_splitter.setSizes(config.splitter_sizes['center'])
         
-        # 恢复SQL
+        # 恢复SQL（快速，不阻塞）
         if config.last_sql:
             self.sql_editor.set_sql(config.last_sql)
         
-        # 加载之前的CSV文件
-        for filepath in config.loaded_files:
-            if os.path.exists(filepath):
-                self._load_csv_file(filepath, show_tab=False)
+        # 逐个异步加载CSV文件，避免阻塞
+        files_to_load = [f for f in config.loaded_files if os.path.exists(f)]
+        self._pending_files = files_to_load.copy()
+        self._total_files_to_load = len(files_to_load)  # 记录总数
+        self._workspace_config = config  # 保存配置用于后续恢复
         
-        # 恢复视图
-        if config.views:
-            def restore_views():
-                for view_name, sql in config.views.items():
-                    try:
-                        self.ipc_client.save_view(view_name, sql)
-                    except:
-                        pass
-                self._refresh_tables()
-            QTimer.singleShot(600, restore_views)
+        if files_to_load:
+            self._show_status(f"正在加载工作区: 第 1/{len(files_to_load)} 个文件...", timeout=0)
+            self._load_next_workspace_file()
+        else:
+            # 没有文件要加载，直接完成
+            self._finish_workspace_load()
+    
+    def _load_next_workspace_file(self):
+        """加载下一个工作区文件"""
+        if not self._pending_files:
+            self._finish_workspace_load()
+            return
         
-        # 恢复当前表
-        if config.current_table:
-            QTimer.singleShot(700, lambda: self._on_table_open(config.current_table))
+        filepath = self._pending_files.pop(0)
+        total = getattr(self, '_total_files_to_load', 1)
+        current = total - len(self._pending_files)
+        
+        self._show_status(f"正在加载: 第 {current}/{total} 个文件 - {os.path.basename(filepath)}", timeout=0)
+        
+        def do_load():
+            return self.ipc_client.load_csv(filepath)
+        
+        def on_loaded(response):
+            if response.success:
+                table_name = response.data.get('name', os.path.basename(filepath))
+                if filepath not in self._loaded_files:
+                    self._loaded_files.append(filepath)
+                # 记录表名到文件路径的映射
+                self._table_to_file[table_name] = filepath
+                self.workspace_manager.add_recent_file(filepath)
+            
+            # 继续加载下一个文件
+            QTimer.singleShot(50, self._load_next_workspace_file)
+        
+        def on_error(error):
+            print(f"加载文件失败: {filepath} - {error}")
+            # 继续加载下一个文件
+            QTimer.singleShot(50, self._load_next_workspace_file)
+        
+        self._run_async(do_load, on_loaded, on_error)
+    
+    def _finish_workspace_load(self):
+        """完成工作区加载"""
+        config = getattr(self, '_workspace_config', None)
+        
+        # 刷新表列表
+        self._refresh_tables()
+        self._update_recent_menu()
+        self._update_sql_completer()
+        
+        # 更新工作区搜索补全
+        if hasattr(self, '_update_workspace_completer'):
+            self._update_workspace_completer()
+        
+        if config:
+            # 恢复视图
+            if config.views:
+                def restore_views():
+                    for view_name, sql in config.views.items():
+                        try:
+                            self.ipc_client.save_view(view_name, sql)
+                        except:
+                            pass
+                    self._refresh_tables()
+                QTimer.singleShot(300, restore_views)
+            
+            # 恢复当前表
+            if config.current_table:
+                QTimer.singleShot(500, lambda: self._on_table_open(config.current_table))
+        
+        # 确保修改标记为False
+        self._workspace_dirty = False
+        self._update_window_title()
         
         self._show_status("工作区已加载")
+    
+    def _load_workspace(self):
+        """加载工作区（兼容旧调用）"""
+        self._load_workspace_async()
     
     def _update_recent_menu(self):
         """更新最近打开菜单"""
@@ -1756,6 +2354,11 @@ class MainWindow(QMainWindow):
                 # 添加到已加载文件
                 if filepath not in self._loaded_files:
                     self._loaded_files.append(filepath)
+                    # 标记工作区已修改
+                    self._mark_workspace_dirty()
+                
+                # 记录表名到文件路径的映射
+                self._table_to_file[table_name] = filepath
                 
                 # 添加到最近文件
                 self.workspace_manager.add_recent_file(filepath)

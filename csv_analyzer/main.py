@@ -32,14 +32,40 @@ def main():
     else:
         font = QFont("Ubuntu", 10)
     font.setStyleHint(QFont.StyleHint.SansSerif)
+    # 确保字体大小有效
+    if font.pointSize() <= 0:
+        font.setPointSize(10)
     app.setFont(font)
     
     # 高DPI支持（PyQt6默认启用）
     
+    # 导入工作区管理器
+    from csv_analyzer.core.workspace import WorkspaceManager
+    
+    workspace_manager = WorkspaceManager()
+    
+    # 尝试迁移旧版本工作区
+    migrated_id = workspace_manager.migrate_legacy_workspace()
+    
+    # 检查是否有最后使用的工作区
+    last_workspace_id = workspace_manager.get_last_workspace_id()
+    
+    selected_workspace_id = None
+    show_welcome = True
+    
+    if migrated_id:
+        # 刚迁移完成，使用迁移的工作区
+        selected_workspace_id = migrated_id
+        show_welcome = False
+    elif last_workspace_id:
+        # 有上次使用的工作区，直接加载
+        selected_workspace_id = last_workspace_id
+        show_welcome = False
+    
     # 导入并创建主窗口
     from csv_analyzer.frontend.main_window import MainWindow
     
-    window = MainWindow()
+    window = MainWindow(workspace_id=selected_workspace_id, show_welcome=show_welcome)
     window.show()
     
     # 运行事件循环

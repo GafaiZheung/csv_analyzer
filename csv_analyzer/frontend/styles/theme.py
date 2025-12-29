@@ -12,6 +12,8 @@ VSCODE_COLORS = {
     "titlebar_bg": "#3c3c3c",
     "statusbar_bg": "#007acc",
     "panel_bg": "#1e1e1e",
+    "accent": "#007acc",
+    "accent_hover": "#005f99",
     
     # 边框
     "border": "#3c3c3c",
@@ -555,14 +557,23 @@ def get_main_stylesheet() -> str:
 
 def get_sql_editor_stylesheet() -> str:
     """获取SQL编辑器样式"""
+    import platform
     colors = VSCODE_COLORS
+    
+    # Windows 使用 Consolas，macOS 使用 Menlo
+    if platform.system() == 'Windows':
+        font_family = '"Consolas", "Courier New", monospace'
+        font_size = '12px'
+    else:
+        font_family = '"Menlo", "Monaco", "Consolas", monospace'
+        font_size = '14px'
     
     return f"""
     QPlainTextEdit {{
         background-color: {colors['editor_bg']};
         color: {colors['foreground']};
-        font-family: "Menlo", "Consolas", "Monaco", "Courier New", monospace;
-        font-size: 14px;
+        font-family: {font_family};
+        font-size: {font_size};
         line-height: 1.5;
         border: none;
         padding: 10px;

@@ -75,7 +75,8 @@ class CellValuePanel(QFrame):
                 border: 1px solid {VSCODE_COLORS['border']};
                 border-radius: 4px;
                 padding: 8px;
-                font-family: 'Consolas', 'Monaco', monospace;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 12px;
             }}
         """)
         self.value_display.setPlaceholderText("选择单元格查看值...")

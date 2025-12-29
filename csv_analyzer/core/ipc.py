@@ -33,6 +33,7 @@ class MessageType(Enum):
     # 分析操作
     ANALYZE_TABLE = "analyze_table"
     ANALYZE_COLUMN = "analyze_column"
+    ANALYZE_COLUMN_SQL = "analyze_column_sql"  # 通过SQL分析列
     GET_MISSING_REPORT = "get_missing_report"
     GET_NUMERIC_SUMMARY = "get_numeric_summary"
     GET_COLUMN_DISTRIBUTION = "get_column_distribution"
@@ -268,6 +269,13 @@ class BackendWorker:
         column_name = payload["column_name"]
         
         return self.analyzer.analyze_column(table_name, column_name)
+    
+    def _handle_analyze_column_sql(self, payload: Dict) -> Dict:
+        """处理通过SQL分析列的请求"""
+        sql = payload["sql"]
+        column_name = payload["column_name"]
+        
+        return self.analyzer.analyze_column_from_sql(sql, column_name)
     
     def _handle_get_missing_report(self, payload: Dict) -> Dict:
         return self.analyzer.get_missing_value_report(payload["table_name"])
@@ -545,6 +553,13 @@ class IPCClient:
         return self.send_message(
             MessageType.ANALYZE_COLUMN,
             {"table_name": table_name, "column_name": column_name}
+        )
+    
+    def analyze_column_sql(self, sql: str, column_name: str) -> Response:
+        """通过SQL分析列"""
+        return self.send_message(
+            MessageType.ANALYZE_COLUMN_SQL,
+            {"sql": sql, "column_name": column_name}
         )
     
     def get_missing_report(self, table_name: str) -> Response:

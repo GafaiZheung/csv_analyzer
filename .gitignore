@@ -67,3 +67,4 @@ Thumbs.db
 *.csv
 *.log
 uv.lock
+*.tmp

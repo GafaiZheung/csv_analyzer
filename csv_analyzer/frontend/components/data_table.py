@@ -111,6 +111,7 @@ class DataTableWidget(QWidget):
         self._page_size = 100
         self._total_rows = 0
         self._current_table = ""  # 当前表名
+        self._current_sql = ""    # 当前SQL（用于查询结果）
         self._setup_ui()
     
     def _setup_ui(self):
@@ -445,3 +446,14 @@ class DataTableWidget(QWidget):
         """设置当前表名"""
         self._current_table = table_name
     
+    def get_current_table(self) -> str:
+        """获取当前表名"""
+        return self._current_table
+    
+    def set_current_sql(self, sql: str):
+        """设置当前SQL（用于查询结果）"""
+        self._current_sql = sql
+    
+    def get_current_sql(self) -> str:
+        """获取当前SQL"""
+        return self._current_sql
