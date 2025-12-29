@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QMenuBar, QMenu, QToolBar, QStatusBar, QFileDialog,
     QTabWidget, QMessageBox, QInputDialog, QLabel, QProgressBar,
     QApplication, QToolButton, QFrame, QLineEdit, QCompleter,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPoint, QEvent, QRect, QStringListModel
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPainter, QColor, QPen, QShortcut
@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         self._current_table: Optional[str] = None
         self._workers: list = []
         self._loaded_files: List[str] = []
+        self._shutting_down: bool = False
         
         # 表名到文件路径的映射
         self._table_to_file: Dict[str, str] = {}
@@ -802,35 +803,45 @@ class MainWindow(QMainWindow):
                 # 获得焦点时显示下拉列表
                 self._show_workspace_popup()
                 return False
-            elif et == QEvent.Type.FocusOut:
-                # 失去焦点时延迟隐藏（允许点击下拉项）
-                QTimer.singleShot(150, self._hide_workspace_popup)
+            elif et == QEvent.Type.MouseButtonPress:
+                # 点击搜索框时显示下拉列表
+                self._show_workspace_popup()
                 return False
             elif et == QEvent.Type.KeyPress:
                 key = event.key()
-                if hasattr(self, 'workspace_popup') and self.workspace_popup.isVisible():
+                popup = getattr(self, 'workspace_popup', None)
+                if popup is not None and popup.isVisible():
                     if key == Qt.Key.Key_Down:
-                        # 向下导航
-                        current = self.workspace_popup.currentRow()
-                        if current < self.workspace_popup.count() - 1:
-                            self.workspace_popup.setCurrentRow(current + 1)
+                        current = popup.currentRow()
+                        if current < popup.count() - 1:
+                            popup.setCurrentRow(current + 1)
                         return True
                     elif key == Qt.Key.Key_Up:
-                        # 向上导航
-                        current = self.workspace_popup.currentRow()
+                        current = popup.currentRow()
                         if current > 0:
-                            self.workspace_popup.setCurrentRow(current - 1)
+                            popup.setCurrentRow(current - 1)
                         return True
                     elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                        # 回车选择
-                        item = self.workspace_popup.currentItem()
+                        item = popup.currentItem()
                         if item and item.data(Qt.ItemDataRole.UserRole):
                             self._on_workspace_item_clicked(item)
                         return True
                     elif key == Qt.Key.Key_Escape:
                         self._hide_workspace_popup()
-                        self.workspace_search.clear()
                         return True
+        
+        # 点击其他区域时收起工作区下拉
+        popup = getattr(self, 'workspace_popup', None)
+        if popup is not None and popup.isVisible():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                global_pos = None
+                try:
+                    global_pos = event.globalPosition().toPoint()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                if global_pos is not None:
+                    if not self._is_point_in_widget(self.workspace_search, global_pos) and not self._is_point_in_widget(popup, global_pos):
+                        self._hide_workspace_popup()
         
         if not getattr(self, "_frameless_enabled", False):
             return super().eventFilter(watched, event)
@@ -962,17 +973,19 @@ class MainWindow(QMainWindow):
         # 工作区搜索容器
         search_container = QWidget()
         search_container.setObjectName("workspaceSearchContainer")
+        search_container.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(0)
         
         # 搜索框容器（带图标）
         search_box = QWidget()
-        search_box.setFixedWidth(300)
-        search_box.setFixedHeight(26)
+        search_box.setFixedWidth(400)
+        search_box.setFixedHeight(18)
         search_box_layout = QHBoxLayout(search_box)
         search_box_layout.setContentsMargins(8, 0, 8, 0)
         search_box_layout.setSpacing(6)
+        self.workspace_search_box = search_box
         
         # 搜索图标
         search_icon = QLabel()
@@ -999,7 +1012,7 @@ class MainWindow(QMainWindow):
         search_box.setStyleSheet(f"""
             QWidget {{
                 background-color: {VSCODE_COLORS['titlebar_bg']};
-                border: 1px solid {VSCODE_COLORS['border']};
+                border: 1px solid gray;
                 border-radius: 4px;
             }}
             QWidget:focus-within {{
@@ -1022,9 +1035,17 @@ class MainWindow(QMainWindow):
     
     def _setup_workspace_popup(self):
         """设置工作区下拉列表"""
-        self.workspace_popup = QListWidget()
-        self.workspace_popup.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        self.workspace_popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        if getattr(self, 'workspace_popup', None) is not None:
+            return
+        # 设为主窗口子控件，避免退出阶段析构顺序问题
+        self.workspace_popup = QListWidget(self)
+        # 使用无边框悬浮窗，避免 Qt.Popup 自动关闭导致闪退
+        self.workspace_popup.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.workspace_popup.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.workspace_popup.setMouseTracking(True)
         self.workspace_popup.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.workspace_popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1050,11 +1071,22 @@ class MainWindow(QMainWindow):
         """)
         self.workspace_popup.itemClicked.connect(self._on_workspace_item_clicked)
         self.workspace_popup.currentItemChanged.connect(self._on_workspace_popup_current_changed)
+        self.workspace_popup.installEventFilter(self)
         self.workspace_popup.hide()
+
+    def _ensure_workspace_popup(self):
+        """确保下拉存在（可能在关闭时被清理）"""
+        if getattr(self, 'workspace_popup', None) is None:
+            self._setup_workspace_popup()
+        return self.workspace_popup
     
     def _show_workspace_popup(self):
         """显示工作区下拉列表"""
-        self.workspace_popup.clear()
+        popup = self._ensure_workspace_popup()
+        if popup is None:
+            return
+        
+        popup.clear()
         
         # 获取工作区列表
         query = self.workspace_search.text().strip()
@@ -1069,23 +1101,26 @@ class MainWindow(QMainWindow):
         if not workspaces:
             item = QListWidgetItem("没有找到工作区")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            self.workspace_popup.addItem(item)
+            popup.addItem(item)
         else:
             for ws in workspaces[:8]:  # 最多显示8个
                 item = QListWidgetItem(f"  {ws.name}")
                 item.setIcon(get_icon("folder"))
                 item.setData(Qt.ItemDataRole.UserRole, ws.id)
                 item.setData(Qt.ItemDataRole.UserRole + 1, ws.name)  # 保存原始名称
-                self.workspace_popup.addItem(item)
+                popup.addItem(item)
         
-        # 定位到搜索框下方
-        search_rect = self.workspace_search.parent().rect()
-        global_pos = self.workspace_search.parent().mapToGlobal(search_rect.bottomLeft())
+        # 定位到搜索框下方（使用搜索框容器确保对齐）
+        search_box = getattr(self, "workspace_search_box", self.workspace_search)
+        search_global_pos = search_box.mapToGlobal(search_box.rect().bottomLeft())
         
-        self.workspace_popup.setFixedWidth(300)
-        self.workspace_popup.setFixedHeight(min(len(workspaces) * 40 + 12, 340))
-        self.workspace_popup.move(global_pos.x(), global_pos.y() + 4)
-        self.workspace_popup.show()
+        popup.setFixedWidth(search_box.width())
+        # 至少显示两行高度，防止内容过少导致定位闪烁
+        min_height = 80
+        calculated_height = min(len(workspaces) * 40 + 12, 340)
+        popup.setFixedHeight(max(min_height, calculated_height))
+        popup.move(search_global_pos.x(), search_global_pos.y() + 6)
+        popup.show()
     
     def _on_workspace_popup_current_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
         """下拉列表当前项变化"""
@@ -1103,8 +1138,18 @@ class MainWindow(QMainWindow):
     
     def _hide_workspace_popup(self):
         """隐藏工作区下拉列表"""
-        if hasattr(self, 'workspace_popup'):
-            self.workspace_popup.hide()
+        popup = getattr(self, 'workspace_popup', None)
+        if popup is not None:
+            popup.hide()
+
+    def _is_point_in_widget(self, widget: QWidget, global_pos) -> bool:
+        """判断全局坐标是否在指定widget内"""
+        try:
+            rect = widget.rect()
+            mapped = widget.mapFromGlobal(global_pos)
+            return rect.contains(mapped)
+        except Exception:
+            return False
     
     def _on_workspace_item_clicked(self, item):
         """点击工作区项"""
@@ -1204,6 +1249,13 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self._update_workspace_completer()
         self._show_status(f"已创建工作区: {name}")
+    
+    def _remove_welcome_page(self):
+        """移除欢迎页（如果存在）"""
+        for i in range(self.data_tabs.count()):
+            if self.data_tabs.tabText(i) == "欢迎":
+                self.data_tabs.removeTab(i)
+                break
     
     def _clear_current_state(self):
         """清理当前工作区状态"""
@@ -2060,6 +2112,9 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """关闭事件"""
+        if self._shutting_down:
+            event.ignore()
+            return
         # 只在工作区被修改时询问保存
         if self._workspace_dirty:
             reply = QMessageBox.question(
@@ -2078,32 +2133,57 @@ class MainWindow(QMainWindow):
                     # 保存失败，取消关闭
                     event.ignore()
                     return
-        
-        # 停止所有异步工作线程
-        for worker in self._workers:
-            try:
-                if worker.isRunning():
-                    worker.quit()
-                    worker.wait(1000)
-            except:
-                pass
-        self._workers.clear()
-        
-        # 停止后端
+        # 标记正在退出，先隐藏前端界面
+        self._shutting_down = True
+        self.hide()
+
+        # 分阶段关闭：先前端UI，后后端，再退出主进程
+        QTimer.singleShot(0, self._graceful_shutdown)
+        event.accept()
+
+    def _graceful_shutdown(self):
+        """分阶段关闭：先清理前端资源，再停后端，最后退出主进程"""
+        # 收起并销毁弹出控件
         try:
-            self.ipc_client.stop()
-        except:
+            popup = getattr(self, 'workspace_popup', None)
+            if popup:
+                popup.removeEventFilter(self)
+                popup.hide()
+                popup.deleteLater()
+                self.workspace_popup = None
+        except Exception:
             pass
-        
+
         # 移除事件过滤器
         try:
             app = QApplication.instance()
             if app is not None:
                 app.removeEventFilter(self)
-        except:
+        except Exception:
             pass
-        
-        event.accept()
+
+        # 停止所有异步工作线程
+        for worker in list(self._workers):
+            try:
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait(1000)
+            except Exception:
+                pass
+        self._workers.clear()
+
+        # 停止后端
+        try:
+            if hasattr(self, 'ipc_client'):
+                self.ipc_client.stop()
+        except Exception:
+            pass
+
+        # 退出主进程
+        try:
+            QTimer.singleShot(0, QApplication.quit)
+        except Exception:
+            pass
     
     # === 工作区管理 ===
     
@@ -2338,6 +2418,9 @@ class MainWindow(QMainWindow):
         if not os.path.exists(filepath):
             QMessageBox.warning(self, "文件不存在", f"文件 {filepath} 不存在")
             return
+        
+        # 加载文件前移除欢迎页
+        self._remove_welcome_page()
         
         self._show_status(f"正在加载: {os.path.basename(filepath)}...")
         self._show_progress(True)

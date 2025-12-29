@@ -9,12 +9,14 @@ import multiprocessing
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QCoreApplication
 
 
 def main():
     """应用程序入口"""
     # macOS 多进程支持
     multiprocessing.set_start_method('spawn', force=True)
+    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_DisableSessionManager)
     
     # 创建应用
     app = QApplication(sys.argv)
@@ -51,16 +53,15 @@ def main():
     last_workspace_id = workspace_manager.get_last_workspace_id()
     
     selected_workspace_id = None
+    # 始终展示欢迎页，但仍自动加载上一次的工作区（如果存在）
     show_welcome = True
     
     if migrated_id:
         # 刚迁移完成，使用迁移的工作区
         selected_workspace_id = migrated_id
-        show_welcome = False
     elif last_workspace_id:
         # 有上次使用的工作区，直接加载
         selected_workspace_id = last_workspace_id
-        show_welcome = False
     
     # 导入并创建主窗口
     from csv_analyzer.frontend.main_window import MainWindow
