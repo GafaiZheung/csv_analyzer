@@ -632,12 +632,15 @@ class MainWindow(QMainWindow):
                 QToolBar {{
                     background-color: {VSCODE_COLORS['titlebar_bg']};
                     border: none;
-                    spacing: 4px;
-                    padding: 0px 8px;
+                    spacing: 2px;
+                    padding: 0px 4px;
+                    min-height: 28px;
+                    max-height: 28px;
                 }}
                 QToolButton {{
-                    padding: 2px 8px;
+                    padding: 2px 4px;
                     border-radius: 4px;
+                    background-color: transparent;
                 }}
                 QToolButton:hover {{
                     background-color: {VSCODE_COLORS['hover']};
@@ -974,6 +977,12 @@ class MainWindow(QMainWindow):
         search_container = QWidget()
         search_container.setObjectName("workspaceSearchContainer")
         search_container.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        search_container.setStyleSheet(f"""
+            QWidget#workspaceSearchContainer {{
+                background-color: {VSCODE_COLORS['titlebar_bg']};
+            }}
+        """)
+
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(0)
@@ -981,7 +990,7 @@ class MainWindow(QMainWindow):
         # 搜索框容器（带图标）
         search_box = QWidget()
         search_box.setFixedWidth(400)
-        search_box.setFixedHeight(18)
+        search_box.setFixedHeight(20)
         search_box_layout = QHBoxLayout(search_box)
         search_box_layout.setContentsMargins(8, 0, 8, 0)
         search_box_layout.setSpacing(6)
@@ -989,7 +998,7 @@ class MainWindow(QMainWindow):
         
         # 搜索图标
         search_icon = QLabel()
-        search_icon.setPixmap(get_icon("search").pixmap(14, 14))
+        search_icon.setPixmap(get_icon("search").pixmap(12, 12))
         search_box_layout.addWidget(search_icon)
         
         # 工作区搜索框
@@ -1001,23 +1010,24 @@ class MainWindow(QMainWindow):
             QLineEdit#workspaceSearch {{
                 background-color: transparent;
                 color: {VSCODE_COLORS['foreground']};
-                border: none;
-                font-size: 12px;
+                font-size: 10px;
                 padding: 0;
+                border: none;
             }}
         """)
         search_box_layout.addWidget(self.workspace_search, 1)
         
         # 搜索框容器样式（与标题栏背景融合）
+        search_box.setObjectName("workspaceSearchBox")
         search_box.setStyleSheet(f"""
-            QWidget {{
+            QWidget#workspaceSearchBox {{
                 background-color: {VSCODE_COLORS['titlebar_bg']};
                 border: 1px solid gray;
                 border-radius: 4px;
             }}
-            QWidget:focus-within {{
+            QWidget#workspaceSearchBox:focus-within {{
                 border-color: {VSCODE_COLORS['input_focus_border']};
-                background-color: {VSCODE_COLORS['input_bg']};
+                background-color: {VSCODE_COLORS['titlebar_bg']};
             }}
         """)
         
@@ -1274,6 +1284,12 @@ class MainWindow(QMainWindow):
         # 刷新侧边栏
         self.sidebar.clear_tables()
         self.sidebar.clear_views()
+        
+        # 清空后端数据（表和视图）
+        try:
+            self.ipc_client.clear_all()
+        except Exception as e:
+            print(f"清空后端数据失败: {e}")
         
         # 重置修改标记
         self._workspace_dirty = False
@@ -1683,8 +1699,8 @@ class MainWindow(QMainWindow):
         """打开视图"""
         # 在SQL编辑器中显示SQL
         self.sql_editor.set_sql(sql)
-        # 执行查询
-        self._execute_sql(sql)
+        # 执行查询并使用视图名作为Tab名
+        self._execute_sql(sql, tab_name=f"视图: {view_name}")
     
     def _on_view_delete(self, view_name: str):
         """删除视图"""
@@ -1739,8 +1755,13 @@ class MainWindow(QMainWindow):
         if sql.strip():
             self._execute_sql(sql)
     
-    def _execute_sql(self, sql: str):
-        """执行SQL"""
+    def _execute_sql(self, sql: str, tab_name: str = None):
+        """执行SQL
+        
+        Args:
+            sql: SQL查询语句
+            tab_name: Tab名称，如果为None则使用默认的"查询结果"
+        """
         self._show_status("执行查询中...")
         self._show_progress(True)
         
@@ -1751,15 +1772,28 @@ class MainWindow(QMainWindow):
         def do_execute():
             return self.ipc_client.execute_query(sql, 1000, 0)
         
-        # 复用结果Tab，使用弱引用避免关闭后访问已销毁的控件
-        tab_name = "查询结果"
+        # 如果未指定tab_name，使用默认名称并复用
+        if tab_name is None:
+            tab_name = "查询结果"
+            reuse_tab = True
+        else:
+            # 如果指定了tab_name，检查是否已存在该名称的tab
+            reuse_tab = False
+            for i in range(self.data_tabs.count()):
+                if self.data_tabs.tabText(i) == tab_name:
+                    reuse_tab = True
+                    break
+        
         result_widget = None
         result_index = -1
-        for i in range(self.data_tabs.count()):
-            if self.data_tabs.tabText(i) == tab_name:
-                result_widget = self.data_tabs.widget(i)
-                result_index = i
-                break
+        
+        # 如果要复用tab，先查找是否存在
+        if reuse_tab:
+            for i in range(self.data_tabs.count()):
+                if self.data_tabs.tabText(i) == tab_name:
+                    result_widget = self.data_tabs.widget(i)
+                    result_index = i
+                    break
 
         result_widget_ref = None
 

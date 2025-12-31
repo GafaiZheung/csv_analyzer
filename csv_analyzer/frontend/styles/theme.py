@@ -179,7 +179,7 @@ def get_main_stylesheet() -> str:
         background-color: {colors['statusbar_bg']};
         color: white;
         border: none;
-        min-height: 20px;
+        max-height: 18px;
         padding: 2px 10px;
         border-bottom-left-radius: {colors['window_radius']};
         border-bottom-right-radius: {colors['window_radius']};

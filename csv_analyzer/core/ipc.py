@@ -18,6 +18,7 @@ class MessageType(Enum):
     # 文件操作
     LOAD_CSV = "load_csv"
     DROP_TABLE = "drop_table"
+    CLEAR_ALL = "clear_all"
     GET_TABLES = "get_tables"
     GET_TABLE_INFO = "get_table_info"
     
@@ -175,6 +176,13 @@ class BackendWorker:
     
     def _handle_drop_table(self, payload: Dict) -> bool:
         return self.engine.drop_table(payload["table_name"])
+    
+    def _handle_clear_all(self, payload: Dict) -> bool:
+        """清除所有表和视图"""
+        # 清除分析器缓存
+        if self.analyzer:
+            self.analyzer._cache.clear()
+        return self.engine.clear_all()
     
     def _handle_get_tables(self, payload: Dict) -> list:
         tables = self.engine.get_tables()
@@ -582,3 +590,7 @@ class IPCClient:
             MessageType.DROP_TABLE,
             {"table_name": table_name}
         )
+    
+    def clear_all(self) -> Response:
+        """清除所有表和视图"""
+        return self.send_message(MessageType.CLEAR_ALL, {})

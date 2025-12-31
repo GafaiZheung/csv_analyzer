@@ -328,6 +328,25 @@ class DataEngine:
                 print(f"导出失败: {e}")
                 return False
     
+    def clear_all(self):
+        """清除所有表和视图"""
+        with self._lock:
+            try:
+                # 删除所有视图
+                for view_name in list(self._views.keys()):
+                    self._conn.execute(f'DROP VIEW IF EXISTS "{view_name}"')
+                self._views.clear()
+                
+                # 删除所有表
+                for table_name in list(self._tables.keys()):
+                    self._conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+                self._tables.clear()
+                
+                return True
+            except Exception as e:
+                print(f"清除所有数据失败: {e}")
+                return False
+    
     def close(self):
         """关闭数据库连接"""
         with self._lock:
