@@ -1,30 +1,25 @@
 [project]
 name = "csv-analyzer"
-version = "1.0.0"
-description = "A large CSV viewer and analyzer with PyQt frontend and separated backend"
-readme = "README.md"
-requires-python = ">=3.10"
+version = "2.0.0"
+description = "Universal Database Analyzer - A DBeaver-like database client with data analysis"
+requires-python = ">=3.11"
 dependencies = [
-    "pyqt6>=6.6.0",
-    "pandas>=2.1.0",
-    "numpy>=1.26.0",
-    "duckdb>=0.9.0",
-    "pyarrow>=14.0.0",
-    "polars>=0.19.0",
-    "scipy>=1.11.0",
-    "chardet>=5.2.0",
+    "duckdb>=0.9",
+    "polars>=0.20",
+    "sqlalchemy>=2.0",
+    "chardet>=5.0",
+    "numpy>=1.24",
+    "pymysql>=1.1.2",
 ]
 
-[project.scripts]
-csv-analyzer = "csv_analyzer.main:main"
+[project.optional-dependencies]
+postgres = ["psycopg2-binary>=2.9"]
+mysql = ["pymysql>=1.1"]
+all = ["psycopg2-binary>=2.9", "pymysql>=1.1"]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[tool.uv]
-dev-dependencies = [
-    "pytest>=7.4.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-]
+[project.scripts]
+db-analyzer = "csv_analyzer.backend.server:main"

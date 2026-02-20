@@ -68,3 +68,5 @@ Thumbs.db
 *.log
 uv.lock
 *.tmp
+
+node_modules/

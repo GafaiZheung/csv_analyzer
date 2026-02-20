@@ -1,0 +1,17 @@
+{
+  "name": "db-analyzer",
+  "version": "2.0.0",
+  "description": "Universal Database Analyzer",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "launch": "cd .. && bash start.sh"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.2"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

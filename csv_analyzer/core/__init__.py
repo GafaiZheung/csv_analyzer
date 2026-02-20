@@ -1,1 +1,1 @@
-# Core Module
+"""Core infrastructure for inter-process communication."""

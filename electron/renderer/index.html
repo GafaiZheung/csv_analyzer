@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src blob:">
+  <title>DB Analyzer</title>
+  <link rel="stylesheet" href="styles/theme.css">
+  <link rel="stylesheet" href="../node_modules/monaco-editor/min/vs/editor/editor.main.css">
+</head>
+<body>
+
+  <!-- ════════════ Welcome / Workspace Selection ════════════ -->
+  <div id="welcome-screen">
+    <div class="welcome-page">
+      <div class="welcome-logo">
+        <svg width="64" height="64" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4 6v4c0 1.66 3.58 3 8 3s8-1.34 8-3V6" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4 10v4c0 1.66 3.58 3 8 3s8-1.34 8-3v-4" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4 14v4c0 1.66 3.58 3 8 3s8-1.34 8-3v-4" stroke="currentColor" fill="none" stroke-width="1.2"/></svg>
+      </div>
+      <h1 class="welcome-title">DB Analyzer</h1>
+      <p class="welcome-subtitle" data-i18n="welcome.subtitle"></p>
+      <div class="welcome-actions">
+        <button class="btn btn-primary" id="btn-select-workspace" data-i18n="welcome.selectWorkspace"></button>
+      </div>
+      <div id="recent-workspaces" class="recent-list"></div>
+    </div>
+  </div>
+
+  <!-- ════════════ Main Application ════════════ -->
+  <div id="app" class="hidden">
+
+    <!-- ── Activity Bar ── -->
+    <aside id="activity-bar">
+      <div class="activity-top">
+        <button class="activity-btn active" data-view="workspace" data-i18n-title="activity.workspace">
+          <svg viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="activity-btn" data-view="git" data-i18n-title="activity.git">
+          <svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3" stroke="currentColor" fill="none" stroke-width="1.5"/><circle cx="6" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.5"/><path d="M13 6h3a2 2 0 012 2v7" stroke="currentColor" fill="none" stroke-width="1.5"/><line x1="6" y1="9" x2="6" y2="21" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button class="activity-btn" data-view="extensions" data-i18n-title="activity.extensions">
+          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="activity-bottom">
+        <button class="activity-btn" data-view="settings" data-i18n-title="activity.settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke="currentColor" fill="none" stroke-width="1.5"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" fill="none" stroke-width="1.5"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ── Sidebar ── -->
+    <aside id="sidebar">
+      <!-- Workspace panel -->
+      <div id="sidebar-workspace" class="sidebar-panel active">
+        <div class="sidebar-section" id="section-datasources">
+          <div class="section-header" data-toggle="datasources">
+            <span class="arrow open">▸</span>
+            <span class="section-title" data-i18n="sidebar.dataSources"></span>
+            <div class="section-actions">
+              <button class="icon-btn" id="btn-add-conn" data-i18n-title="sidebar.newConn">
+                <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+              <button class="icon-btn" id="btn-refresh" data-i18n-title="sidebar.refresh">
+                <svg viewBox="0 0 24 24"><path d="M21 2v6h-6M3 12a9 9 0 0115-6.7L21 8M3 22v-6h6M21 12a9 9 0 01-15 6.7L3 16" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="section-content" id="datasources-content">
+            <div class="sidebar-search">
+              <input type="text" id="sidebar-filter" data-i18n-placeholder="sidebar.filter" spellcheck="false">
+            </div>
+            <div class="sidebar-tree" id="db-tree"></div>
+          </div>
+        </div>
+        <div class="section-separator" id="sidebar-v-split"></div>
+        <div class="sidebar-section" id="section-scripts">
+          <div class="section-header" data-toggle="scripts">
+            <span class="arrow open">▸</span>
+            <span class="section-title" data-i18n="sidebar.sqlScripts"></span>
+            <div class="section-actions">
+              <button class="icon-btn" id="btn-new-script" data-i18n-title="sidebar.newScript">
+                <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="section-content" id="scripts-content">
+            <div class="sidebar-tree" id="script-tree"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Git panel -->
+      <div id="sidebar-git" class="sidebar-panel">
+        <div class="sidebar-header">
+          <span class="sidebar-title" data-i18n="git.title"></span>
+        </div>
+        <div class="sidebar-content" id="git-content">
+          <div class="empty-hint" data-i18n="git.loading"></div>
+        </div>
+      </div>
+
+      <!-- Extensions panel -->
+      <div id="sidebar-extensions" class="sidebar-panel">
+        <div class="sidebar-header">
+          <span class="sidebar-title" data-i18n="extensions.title"></span>
+        </div>
+        <div class="sidebar-content" id="extensions-content">
+          <div class="empty-hint" data-i18n="git.loading"></div>
+        </div>
+      </div>
+
+      <!-- Settings panel -->
+      <div id="sidebar-settings" class="sidebar-panel">
+        <div class="sidebar-header">
+          <span class="sidebar-title" data-i18n="settings.title"></span>
+        </div>
+        <div class="sidebar-content" id="settings-content"></div>
+      </div>
+    </aside>
+
+    <!-- ── Sidebar Resize ── -->
+    <div id="sidebar-resize"></div>
+
+    <!-- ── Editor Area ── -->
+    <main id="editor-area">
+      <!-- Upper panel -->
+      <div id="upper-panel">
+        <div class="panel-tab-bar" id="upper-tab-bar"></div>
+        <div class="panel-content" id="upper-content">
+          <div id="upper-welcome" class="panel-placeholder">
+            <p data-i18n="editor.welcome"></p>
+            <div class="placeholder-shortcuts">
+              <span><span data-i18n="editor.newConn"></span> <kbd>&#8984;N</kbd></span>
+              <span><span data-i18n="editor.openCsv"></span> <kbd>&#8984;O</kbd></span>
+              <span><span data-i18n="editor.newSql"></span> <kbd>&#8984;T</kbd></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- H-Splitter -->
+      <div id="h-splitter" class="hidden"></div>
+      <!-- Lower panel -->
+      <div id="lower-panel" class="hidden">
+        <div class="panel-tab-bar" id="lower-tab-bar"></div>
+        <div class="panel-content" id="lower-content"></div>
+      </div>
+    </main>
+
+    <!-- ── Status Bar ── -->
+    <footer id="status-bar" class="disconnected">
+      <div class="status-left">
+        <span id="status-workspace" class="status-item clickable" title="切换工作区"></span>
+        <span id="status-branch" class="status-item"></span>
+        <span id="status-connection" class="status-item" data-i18n="connection.notConnected"></span>
+      </div>
+      <div class="status-right">
+        <span id="status-loading" class="status-item hidden"><span class="status-spinner"></span></span>
+        <span id="status-info" class="status-item"></span>
+        <span id="status-rows" class="status-item"></span>
+        <span id="status-time" class="status-item"></span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ════════════ Connection Dialog ════════════ -->
+  <dialog id="connection-dialog">
+    <div class="dialog-content">
+      <h3 data-i18n="connection.title"></h3>
+      <form id="connection-form">
+        <div class="form-group">
+          <label for="conn-db-type" data-i18n="connection.dbType"></label>
+          <select id="conn-db-type">
+            <option value="duckdb" data-i18n="connection.duckdb"></option>
+            <option value="sqlite" data-i18n="connection.sqlite"></option>
+            <option value="postgresql" data-i18n="connection.postgresql"></option>
+            <option value="mysql" data-i18n="connection.mysql"></option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="group-host">
+          <label for="conn-host" data-i18n="connection.host"></label>
+          <input type="text" id="conn-host" value="localhost" spellcheck="false">
+        </div>
+        <div class="form-group hidden" id="group-port">
+          <label for="conn-port" data-i18n="connection.port"></label>
+          <input type="number" id="conn-port" value="5432">
+        </div>
+        <div class="form-group hidden" id="group-database">
+          <label for="conn-database" data-i18n="connection.database"></label>
+          <input type="text" id="conn-database" spellcheck="false">
+        </div>
+        <div class="form-group hidden" id="group-user">
+          <label for="conn-user" data-i18n="connection.user"></label>
+          <input type="text" id="conn-user" spellcheck="false">
+        </div>
+        <div class="form-group hidden" id="group-password">
+          <label for="conn-password" data-i18n="connection.password"></label>
+          <input type="password" id="conn-password">
+        </div>
+        <div class="form-group">
+          <label for="conn-name" data-i18n="connection.name"></label>
+          <input type="text" id="conn-name" data-i18n-placeholder="connection.nameHint" spellcheck="false">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-conn" data-i18n="connection.cancel"></button>
+          <button type="submit" class="btn btn-primary" id="btn-connect" data-i18n="connection.connect"></button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- ════════════ Monaco AMD Loader ════════════ -->
+  <script>
+    const monacoBase = '../node_modules/monaco-editor/min';
+    self.MonacoEnvironment = {
+      getWorkerUrl(_moduleId, _label) {
+        const blob = [
+          `self.MonacoEnvironment={baseUrl:'${new URL(monacoBase, location.href).href}/'};`,
+          `importScripts('${new URL(monacoBase+'/vs/base/worker/workerMain.js', location.href).href}');`,
+        ].join('\n');
+        return URL.createObjectURL(new Blob([blob], { type: 'text/javascript' }));
+      },
+    };
+    var require = { paths: { vs: monacoBase + '/vs' } };
+  </script>
+  <script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
+  <script>
+    require(['vs/editor/editor.main'], function () {
+      window.monacoReady = true;
+      window.dispatchEvent(new Event('monaco-ready'));
+    });
+  </script>
+
+  <!-- ════════════ Application Scripts ════════════ -->
+  <script src="js/icons.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/sql-completion.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/components/activity-bar.js"></script>
+  <script src="js/components/sidebar.js"></script>
+  <script src="js/components/connection-dialog.js"></script>
+  <script src="js/components/tab-manager.js"></script>
+  <script src="js/components/result-table.js"></script>
+  <script src="js/components/analysis-panel.js"></script>
+  <script src="js/components/git-panel.js"></script>
+  <script src="js/components/settings-panel.js"></script>
+  <script src="js/components/extensions-panel.js"></script>
+  <script src="js/components/status-bar.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
